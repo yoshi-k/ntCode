@@ -38,11 +38,146 @@ needs ability to read bugs and issues from bug tracker
 read the internet
 
 
+# Usage
+
+## Running ntCode
+
+The ntCode application supports multiple execution modes controlled by environment variables:
+
+### Normal Mode (Default)
+```bash
+python ntCode.py
+```
+- Clean execution without debug output
+- Tools execute automatically
+- Conversations logged to `ntcode.log`
+- Best for regular usage
+
+### Debug Mode
+```bash
+NTCODE_DEBUG=true python ntCode.py
+```
+- Detailed logging to console and file
+- Full conversation history logged
+- API request/response details shown
+- Tool invocation details logged
+- Best for troubleshooting and development
+
+### Verbose Mode
+```bash
+NTCODE_VERBOSE=true python ntCode.py
+```
+- Interactive tool approval required
+- User can see and approve each tool execution before it runs
+- Helpful for security verification and learning
+- Best for testing new prompts or when security is critical
+
+### Combined Debug + Verbose Mode
+```bash
+NTCODE_DEBUG=true NTCODE_VERBOSE=true python ntCode.py
+```
+- Full debugging with interactive approval
+- Maximum visibility and control
+- Best for development and security auditing
+
+### Disable Conversation Logging
+```bash
+NTCODE_LOG_CONVERSATIONS=false python ntCode.py
+```
+- Disables conversation logging to file
+- Useful for privacy or storage concerns
+
+## Environment Variables
+
+| Variable | Values | Default | Description |
+|----------|--------|---------|-------------|
+| `NTCODE_DEBUG` | true/false | false | Enable detailed debugging and logging |
+| `NTCODE_VERBOSE` | true/false | false | Enable interactive tool approval |
+| `NTCODE_LOG_CONVERSATIONS` | true/false | true | Enable conversation logging to file |
+| `ANTHROPIC_API_KEY` | string | required | Your Anthropic API key |
+
+## Log Files
+
+- **ntcode.log**: Contains conversation logs, tool executions, and debug information
+- Automatically created when `NTCODE_LOG_CONVERSATIONS=true` (default)
+- Useful for reviewing conversation history and debugging issues
+
+## Security Features
+
+- **Path Validation**: All file operations are restricted to current directory and subdirectories
+- **File Size Limits**: 10MB maximum file size for read/edit operations
+- **Git Safety**: Git operations are validated and secured
+- **Verbose Mode**: Allows manual approval of each tool execution for maximum security
+
 # Current bugs
 Timeout with very long requests
 Claude has a tendency to document tool use in a way that duplicates tool use
 try to figure out what is actually send on the wire. 
-If the llm returns malformed json the application crashes. 
+If the llm returns malformed json the application crashes.
+
+## Bug Analysis & Diagnostic Requirements
+
+### 1. Timeout with very long requests
+**Current Evidence**: 30-second timeout in `run_git_command()` but no timeout handling for Anthropic API calls.
+
+**Diagnostic Needs**:
+- Add comprehensive logging to track API request/response times
+- Monitor conversation history size - large conversations could cause timeouts
+- Check for timeout handling in `execute_llm_call()` function
+- Test with progressively longer inputs to find breaking point
+
+**Likely Root Causes**:
+- Anthropic API has built-in timeouts that aren't handled
+- Large conversation histories being sent with each request
+- No conversation pruning mechanism
+
+### 2. Claude duplicates tool use documentation
+**Current Evidence**: Debug code shows tool invocations are parsed but may be over-documented.
+
+**Diagnostic Needs**:
+- Examine actual wire protocol - what's sent to/from Claude
+- Log conversation array to detect tool result duplication
+- Check `extract_tool_invocations()` parsing logic for edge cases
+- Monitor conversation flow for circular tool calls
+
+**Likely Root Causes**:
+- Tool results added to conversation but Claude includes them in responses
+- `extract_tool_invocations()` may over-parse natural language mentions
+- System prompt may encourage documentation of tool usage
+
+### 3. Malformed JSON crashes application
+**Current Evidence**: `extract_tool_invocations()` has bare `except Exception:` but `json.loads()` could still crash.
+
+**Diagnostic Needs**:
+- Add comprehensive error handling around `json.loads()` calls
+- Log malformed JSON attempts to understand failure patterns
+- Test with intentionally malformed JSON responses
+- Add validation before JSON parsing
+
+**Vulnerable Code Location**:
+```python
+args = json.loads(json_str)  # This could crash without proper handling
+```
+
+## Planned Diagnostic Implementation
+
+### Phase 1: Enhanced Logging System
+- Comprehensive debug logger with file output
+- API call timing and size monitoring
+- Conversation history tracking
+- Tool invocation pattern detection
+
+### Phase 2: Error Recovery & Validation
+- Safe JSON parsing with error recovery
+- Conversation size management and pruning
+- Timeout handling for API calls
+- Circular tool call detection
+
+### Phase 3: Wire Protocol Analysis
+- Log actual requests/responses to/from Claude
+- Track conversation state changes
+- Monitor tool result handling
+- Identify duplication patterns 
 
 # Code Review and Improvement Outline for ntCode.py
 

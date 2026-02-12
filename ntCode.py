@@ -6,9 +6,13 @@
 
 import inspect
 import json
+import logging
 import os
 import subprocess
 import shlex
+import sys
+import time
+from datetime import datetime
 
 import anthropic
 from dotenv import load_dotenv
@@ -26,6 +30,27 @@ claude_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 # Security Configuration
 ALLOWED_BASE_PATHS = [Path.cwd()]  # Only allow current directory and subdirectories
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit
+
+# Debug Configuration
+DEBUG_MODE = os.environ.get("NTCODE_DEBUG", "false").lower() in ["true", "1", "yes"]
+VERBOSE_MODE = os.environ.get("NTCODE_VERBOSE", "false").lower() in ["true", "1", "yes"]
+LOG_CONVERSATIONS = os.environ.get("NTCODE_LOG_CONVERSATIONS", "true").lower() in ["true", "1", "yes"]
+
+# Configure logging
+log_handlers = []
+if DEBUG_MODE:
+    log_handlers.append(logging.StreamHandler(sys.stdout))
+if LOG_CONVERSATIONS:
+    log_handlers.append(logging.FileHandler('ntcode.log', mode='a'))
+if not log_handlers:  # If no logging enabled, use null handler
+    log_handlers.append(logging.NullHandler())
+
+logging.basicConfig(
+    level=logging.DEBUG if DEBUG_MODE else logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=log_handlers
+)
+logger = logging.getLogger('ntCode')
 
 
 def validate_file_access(path: Path) -> None:
@@ -733,14 +758,31 @@ def execute_llm_call(conversation: List[Dict[str, str]]):
         else:
             messages.append(msg)
 
-    response = claude_client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=2000,
-        system=system_content,
-        messages=messages,
-    )
+    if LOG_CONVERSATIONS:
+        logger.info(f"Sending {len(messages)} messages to LLM")
+        if DEBUG_MODE:
+            logger.debug(f"Messages: {json.dumps(messages, indent=2)}")
 
-    return response.content[0].text
+    try:
+        response = claude_client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            system=system_content,
+            messages=messages,
+        )
+        
+        response_text = response.content[0].text
+        
+        if LOG_CONVERSATIONS:
+            logger.info(f"Received response ({len(response_text)} chars)")
+            if DEBUG_MODE:
+                logger.debug(f"Response: {response_text}")
+        
+        return response_text
+        
+    except Exception as e:
+        logger.error(f"LLM call failed: {str(e)}")
+        raise
 
 
 def run_coding_agent_loop():

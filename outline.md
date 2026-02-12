@@ -38,6 +38,12 @@ needs ability to read bugs and issues from bug tracker
 read the internet
 
 
+# Current bugs
+Timeout with very long requests
+Claude has a tendency to document tool use in a way that duplicates tool use
+try to figure out what is actually send on the wire. 
+If the llm returns malformed json the application crashes. 
+
 # Code Review and Improvement Outline for ntCode.py
 
 ## Code Review Summary

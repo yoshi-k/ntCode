@@ -25,11 +25,19 @@ ASSISTANT_COLOR = "\u001b[93m"
 RESET_COLOR = "\u001b[0m"
 
 load_dotenv()
-claude_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+# Configuration Constants
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit
+MAX_CONVERSATION_LENGTH = 50  # Maximum number of messages to keep
+DEFAULT_MODEL = "claude-3-5-sonnet-20241022"  # Default Claude model
+GIT_TIMEOUT = 30  # Git command timeout in seconds
+API_MAX_TOKENS = 8192  # Maximum tokens for API requests
 
 # Security Configuration
 ALLOWED_BASE_PATHS = [Path.cwd()]  # Only allow current directory and subdirectories
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit
+
+# Initialize Claude client
+claude_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 # Debug Configuration
 DEBUG_MODE = os.environ.get("NTCODE_DEBUG", "false").lower() in ["true", "1", "yes"]
@@ -135,7 +143,7 @@ def run_git_command(cmd_args: List[str], cwd: Path = None) -> Dict[str, Any]:
             cwd=cwd,
             capture_output=True,
             text=True,
-            timeout=30,  # Prevent hanging
+            timeout=GIT_TIMEOUT,  # Prevent hanging
         )
 
         return {
@@ -802,7 +810,6 @@ def execute_llm_call(conversation: List[Dict[str, str]]):
             messages.append(msg)
 
     # Implement conversation pruning if it gets too long
-    MAX_CONVERSATION_LENGTH = 50  # Maximum number of messages to keep
     if len(messages) > MAX_CONVERSATION_LENGTH:
         logger.info(f"Conversation too long ({len(messages)} messages), pruning to last {MAX_CONVERSATION_LENGTH}")
         # Keep system message and last MAX_CONVERSATION_LENGTH messages
@@ -816,9 +823,12 @@ def execute_llm_call(conversation: List[Dict[str, str]]):
     try:
         start_time = time.time()
         
+        # Get model from environment or use default
+        model = os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
+        
         response = claude_client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=8192,
+            model=model,
+            max_tokens=API_MAX_TOKENS,
             system=system_content,
             messages=messages,
         )
@@ -837,16 +847,22 @@ def execute_llm_call(conversation: List[Dict[str, str]]):
         
     except anthropic.APITimeoutError as e:
         logger.error(f"API timeout error: {str(e)}")
-        raise Exception(f"Request timed out. Try breaking your request into smaller parts.")
+        return f"⏱️ Request timed out. The conversation may be too long or the request too complex. Try:\n- Breaking your request into smaller parts\n- Starting a fresh conversation\n- Reducing the amount of context"
+    except anthropic.RateLimitError as e:
+        logger.error(f"Rate limit error: {str(e)}")
+        return f"🚫 Rate limit exceeded. Please wait a moment before trying again."
     except anthropic.APIConnectionError as e:
         logger.error(f"API connection error: {str(e)}")
-        raise Exception(f"Failed to connect to Claude API. Check your internet connection.")
+        return f"🌐 Failed to connect to Claude API. Please check your internet connection and try again."
+    except anthropic.AuthenticationError as e:
+        logger.error(f"Authentication error: {str(e)}")
+        return f"🔑 Authentication failed. Please check your ANTHROPIC_API_KEY in your .env file."
     except anthropic.APIError as e:
         logger.error(f"API error: {str(e)}")
-        raise Exception(f"Claude API error: {str(e)}")
+        return f"❌ Claude API error: {str(e)}"
     except Exception as e:
         logger.error(f"LLM call failed: {str(e)}")
-        raise Exception(f"Unexpected error calling Claude: {str(e)}")
+        return f"💥 Unexpected error calling Claude: {str(e)}"
 
 
 def execute_tool_safely(name: str, tool: callable, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -915,6 +931,15 @@ def run_coding_agent_loop():
         while True:
             try:
                 assistant_response = execute_llm_call(conversation)
+                
+                # Check if we got an error message instead of normal response
+                if isinstance(assistant_response, str) and (assistant_response.startswith("⏱️") or 
+                    assistant_response.startswith("🚫") or assistant_response.startswith("🌐") or 
+                    assistant_response.startswith("🔑") or assistant_response.startswith("❌") or 
+                    assistant_response.startswith("💥")):
+                    print(f"{ASSISTANT_COLOR}Error:{RESET_COLOR} {assistant_response}")
+                    break
+                
                 tool_invocations = extract_tool_invocations(assistant_response)
                 
                 if DEBUG_MODE:
@@ -974,7 +999,7 @@ def run_coding_agent_loop():
                 print(f"{ASSISTANT_COLOR}Error:{RESET_COLOR} {str(e)}")
                 print("Please try again with a shorter or simpler request.")
                 break
-                #                print(conversation)
+
 
 
 if __name__ == "__main__":

@@ -179,170 +179,141 @@ args = json.loads(json_str)  # This could crash without proper handling
 - Monitor tool result handling
 - Identify duplication patterns 
 
-# Code Review and Improvement Outline for ntCode.py
+# Code Review and TODO List for ntCode.py
 
-## Code Review Summary
+## Project Overview
 
-This is a Python implementation of a coding assistant that integrates with Claude AI and provides secure file manipulation tools. The code creates a conversational loop where users can interact with Claude, which can execute file operations through defined tools with comprehensive security validation.
+ntCode is a comprehensive AI coding assistant that integrates with Claude AI and provides secure file manipulation and git workflow tools. The project shows excellent security implementation and solid architecture, but needs attention to stability, documentation, and user experience improvements.
 
 ### Security Implementation Status: ✅ STRONG
 The code implements robust security measures including path validation, directory restrictions, file size limits, and protection against path traversal attacks.
 
-## Strengths
+## Project Strengths
 
-1. **Clear Structure**: The code is well-organized with distinct functions for each tool
+1. **Clear Structure**: Well-organized code with distinct functions for each tool
 2. **Type Hints**: Good use of type annotations throughout
 3. **Path Handling**: Robust path resolution with `resolve_abs_path()`
 4. **Tool Registry Pattern**: Clean abstraction for tool management
-5. **Error Handling**: Comprehensive error handling in file operations
-6. **Security Implementation**: ✅ **EXCELLENT** - Comprehensive security validation system
-7. **File Safety**: Protection against large files, path traversal, and unauthorized access
+5. **Security Implementation**: ✅ **EXCELLENT** - Comprehensive security validation system
+6. **File Safety**: Protection against large files, path traversal, and unauthorized access
+7. **Git Integration**: ✅ **COMPLETE** - All 5 git workflow tools fully implemented and tested
 8. **Encoding Handling**: Graceful handling of different file encodings
 9. **Path Validation**: Multi-layer security with symlink protection
 
-## Issues and Areas for Improvement
+## HIGH PRIORITY TODOs
 
-### 1. Error Handling and Robustness
-- **File Operations**: ✅ **IMPLEMENTED** - Comprehensive exception handling for file I/O operations
-- **API Calls**: Missing error handling for Anthropic API failures
-- **Silent Failures**: Tool invocation parsing fails silently
-- **Resource Management**: ✅ **IMPLEMENTED** - Proper file handling with Path objects
-- **Encoding Handling**: ✅ **IMPLEMENTED** - UTF-8 with latin-1 fallback for binary files
+### 1. Bug Fixes & Stability
+- [ ] **Fix JSON parsing crashes** - Add robust error handling for malformed JSON in `extract_tool_invocations()`
+- [ ] **Add API timeout handling** - Implement timeout handling in `execute_llm_call()` function
+- [ ] **Fix conversation memory leak** - Implement conversation history pruning to prevent infinite growth
+- [ ] **Remove debug code** - Clean up debug prints and "Wait" input prompts in main loop
 
-### 2. Security Concerns
-- **Path Traversal**: ✅ **IMPLEMENTED** - Full path validation with `validate_file_access()` function
-- **File Size Limits**: ✅ **IMPLEMENTED** - 10MB file size limit enforced
-- **Directory Restrictions**: ✅ **IMPLEMENTED** - Access limited to current directory and subdirectories
-- **Symlink Protection**: ✅ **IMPLEMENTED** - Validates symlink targets to prevent escape
-- **Path Traversal Detection**: ✅ **IMPLEMENTED** - Prevents ".." path traversal attempts
+### 2. Configuration & Environment
+- [ ] **Create .env.example file** - Document required environment variables
+- [ ] **Add model configuration** - Make Claude model name configurable instead of hard-coded
+- [ ] **Implement proper logging levels** - Replace print statements with proper logging
+- [ ] **Add requirements.txt validation** - Ensure all dependencies are properly listed
 
-### 3. Code Quality Issues
-- **Hard-coded Values**: Model name and token limits are hard-coded
-- **Magic Numbers**: ✅ **PARTIALLY FIXED** - Security constants now defined at top (MAX_FILE_SIZE, ALLOWED_BASE_PATHS)
-- **Debugging Code**: ✅ **MOSTLY CLEAN** - Minimal debug prints remain
-- **Color Constants**: ✅ **IMPLEMENTED** - Terminal color codes properly defined
-- **Configuration**: Security settings properly configured at module level
+### 3. Code Quality
+- [ ] **Refactor tool execution logic** - Replace the large if-elif chain with dynamic parameter mapping
+- [ ] **Add type validation** - Validate tool parameters before execution
+- [ ] **Extract constants** - Move magic numbers and strings to configuration section
+- [ ] **Split large functions** - Break down `run_coding_agent_loop()` into smaller functions
 
-### 4. Architecture and Design
-- **Tool Invocation Logic**: Complex if-elif chain for tool execution
-- **Conversation Management**: No limit on conversation history size
-- **Global State**: Global `claude_client` variable
-- **Mixed Responsibilities**: Main loop handles both UI and API logic
+## MEDIUM PRIORITY TODOs
 
-### 5. User Experience
-- **Limited Feedback**: Minimal error messages for users
-- **No Help System**: No way to get help or list available commands
-- **No Configuration**: No way to configure model, tokens, etc.
+### 4. Testing & Documentation
+- [ ] **Create comprehensive README** - Write proper documentation for setup and usage
+- [ ] **Add unit tests** - Create test suite in the empty `tests/` directory
+- [ ] **Document all environment variables** - Complete the environment variable documentation
+- [ ] **Add API documentation** - Document all available tools and their parameters
 
-## Suggested Improvements Outline
+### 5. Features & UX
+- [ ] **Add help command** - Implement user help system for available commands
+- [ ] **Implement conversation save/load** - Allow users to save and restore sessions
+- [ ] **Add file backup before editing** - Backup files before making changes
+- [ ] **Create batch operations** - Allow multiple files to be processed at once
 
-### Phase 1: Critical Fixes (Security & Stability)
+### 6. Security & Safety
+- [ ] **Add file extension validation** - Validate file types for safety
+- [ ] **Implement rate limiting** - Add API call rate limiting
+- [ ] **Add operation confirmation** - Require confirmation for destructive operations
+- [ ] **Audit security validation** - Review and test all security measures
 
-#### 1.1 Enhanced Error Handling
-- [x] **COMPLETED** - Add try-catch blocks around file operations
-- [ ] Implement proper error handling for API calls
-- [ ] Add logging system for debugging
-- [x] **COMPLETED** - Validate file paths and prevent path traversal
+## LOW PRIORITY TODOs
 
-#### 1.2 Security Improvements
-- [x] **COMPLETED** - Implement file size limits for read operations (10MB)
-- [x] **COMPLETED** - Add configurable allowed directories (ALLOWED_BASE_PATHS)
-- [x] **COMPLETED** - Comprehensive path validation with `validate_file_access()`
-- [ ] Validate file extensions for safety
-- [ ] Add rate limiting for API calls
-- [x] **COMPLETED** - Symlink security validation
+### 7. Architecture & Extensibility
+- [ ] **Create plugin system** - Allow custom tools to be added
+- [ ] **Add web interface option** - Create optional web UI
+- [ ] **Implement tool analytics** - Track tool usage statistics  
+- [ ] **Add conversation branching** - Allow conversation forking
 
-### Phase 2: Enhanced Architecture
+### 8. Advanced Features
+- [ ] **Intelligent commit messages** - Use AI to generate better git commit messages
+- [ ] **Code analysis tools** - Add tools for code quality analysis
+- [ ] **Integration with issue trackers** - Implement bug tracker integration as outlined
+- [ ] **Research capabilities** - Add internet research tools
 
-#### 2.1 Tool System Enhancement
-- [ ] Implement dynamic tool parameter mapping
-- [ ] Add tool parameter validation and type checking
-- [ ] Create tool metadata system for better introspection
-- [ ] Add tool usage analytics and monitoring
+## QUICK WINS (Can be done immediately)
+- [ ] **Fix the empty tests directory** - Add basic test structure
+- [ ] **Update the API key test** - Fix the model name in `test_api_key.py` (uses wrong model)
+- [ ] **Clean up debug output** - Remove the `input("Wait")` line that pauses execution
+- [ ] **Add proper error messages** - Replace generic errors with user-friendly messages
 
-#### 2.2 Session Management
-- [ ] Implement conversation history limits and pruning
-- [ ] Add session save/restore functionality
-- [ ] Create conversation export capabilities
-- [ ] Implement conversation branching/forking
+## IMPLEMENTATION STATUS
 
-#### 2.3 Code Organization
-- [ ] Encapsulate global client state
-- [ ] Create configuration management class
-- [ ] Split into logical modules (tools, security, conversation)
-- [ ] Add comprehensive type validation
+### ✅ Completed Features
+- **Security Framework**: ✅ **EXCELLENT** - Comprehensive security validation system implemented
+- **File Operations**: ✅ **COMPLETE** - All file read/write/list operations with proper validation
+- **Git Integration**: ✅ **COMPLETE** - All 5 git workflow tools fully implemented and tested
+- **Path Validation**: ✅ **COMPLETE** - Multi-layer security with symlink protection
+- **Error Handling**: ✅ **IMPLEMENTED** - Comprehensive exception handling for file operations
 
-### Phase 3: Enhanced Functionality
+### 🔧 Current Implementation Issues
+1. **JSON Parsing**: Tool invocation parsing can crash on malformed JSON
+2. **API Timeouts**: No timeout handling for Anthropic API calls
+3. **Memory Management**: Conversation history grows without bounds
+4. **Debug Code**: Unnecessary debug prints and input pauses remain
+5. **Hard-coded Configuration**: Model name and limits are not configurable
 
-#### 3.1 Better User Experience
-- [ ] Add help command and documentation
-- [ ] Implement conversation history management
-- [ ] Add command history and recall
-- [ ] Improve error messages and feedback
+## DEVELOPMENT PHASES
 
-#### 3.2 Extended Tool Capabilities
-- [ ] Add file search functionality
-- [ ] Implement directory creation/deletion
-- [ ] Add file backup before editing
-- [ ] Create batch operation support
+### Phase 1: Stability & Core Fixes (High Priority)
+**Target**: Make the system robust and production-ready
+- Fix JSON parsing crashes
+- Add API timeout handling
+- Implement conversation pruning
+- Remove debug artifacts
+- Add proper configuration management
 
-#### 3.3 Advanced Features
-- [ ] Add conversation export/import
-- [ ] Implement tool usage statistics
-- [ ] Add plugin system for custom tools
-- [ ] Create web interface option
+### Phase 2: Documentation & Testing (Medium Priority)  
+**Target**: Improve maintainability and reliability
+- Create comprehensive README
+- Build unit test suite
+- Document all APIs and environment variables
+- Add user help system
 
-### Phase 4: Testing & Documentation
+### Phase 3: Enhanced Features (Low Priority)
+**Target**: Expand functionality and user experience
+- Add conversation save/load
+- Implement plugin system
+- Create web interface option
+- Add advanced git features
 
-#### 4.1 Testing Infrastructure
-- [ ] Add unit tests for all functions
-- [ ] Create integration tests
-- [ ] Add mock tests for API interactions
-- [ ] Implement end-to-end testing
+## NEXT IMMEDIATE ACTIONS
+1. **Fix debug code**: Remove `input("Wait")` line that blocks execution
+2. **Update API test**: Fix model name in `test_api_key.py`
+3. **Add basic tests**: Create initial test structure in `tests/` directory
+4. **Create .env.example**: Document required environment variables
+5. **Add error recovery**: Implement robust JSON parsing with fallbacks
 
-#### 4.2 Documentation
-- [ ] Create comprehensive README
-- [ ] Add API documentation
-- [ ] Write user guide
-- [ ] Add developer documentation
+## PROJECT VISION
 
-## Implementation Priority
+ntCode aims to become a comprehensive AI-powered development environment with:
+- **Secure Execution**: Robust security without sacrificing functionality
+- **Git Integration**: Complete workflow automation for version control
+- **Extensible Architecture**: Plugin system for custom tools and integrations
+- **User-Friendly Interface**: Both CLI and optional web interface
+- **Production Ready**: Comprehensive testing, documentation, and error handling
 
-1. **High Priority**: Security fixes, error handling, path validation
-2. **Medium Priority**: Code refactoring, configuration management
-3. **Low Priority**: Enhanced features, web interface
-
-## Specific Code Improvements
-
-### Example: Better Error Handling
-```python
-def read_file_tool(filename: str) -> Dict[str, Any]:
-    try:
-        full_path = resolve_abs_path(filename)
-        validate_file_access(full_path)  # New validation function
-        
-        if full_path.stat().st_size > MAX_FILE_SIZE:
-            raise ValueError(f"File too large: {full_path}")
-            
-        content = full_path.read_text(encoding='utf-8')
-        return {"file_path": str(full_path), "content": content}
-    except Exception as e:
-        logger.error(f"Error reading file {filename}: {e}")
-        return {"error": str(e), "file_path": filename}
-```
-
-### Example: Tool Registry Improvement
-```python
-class Tool:
-    def __init__(self, name: str, func: Callable, description: str):
-        self.name = name
-        self.func = func
-        self.description = description
-        
-    def execute(self, **kwargs):
-        return self.func(**kwargs)
-```
-
-## Conclusion
-
-The code provides a solid foundation for a coding assistant but needs significant improvements in error handling, security, and architecture. The suggested phases provide a structured approach to enhancement while maintaining functionality during development.
+The foundation is solid - now we need to polish the rough edges and expand the feature set systematically.

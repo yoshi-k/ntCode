@@ -737,15 +737,58 @@ def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
             continue
         try:
             after = line[len("tool:") :].strip()
+            if "(" not in after:
+                logger.warning(f"Invalid tool invocation format (missing parentheses): {line}")
+                continue
+            
             name, rest = after.split("(", 1)
             name = name.strip()
-            if not rest.endswith(")"):
+            
+            if not name:
+                logger.warning(f"Invalid tool invocation format (empty tool name): {line}")
                 continue
+                
+            if not rest.endswith(")"):
+                logger.warning(f"Invalid tool invocation format (missing closing parenthesis): {line}")
+                continue
+                
             json_str = rest[:-1].strip()
-            args = json.loads(json_str)
+            
+            # Handle empty JSON case
+            if not json_str:
+                args = {}
+            else:
+                try:
+                    args = json.loads(json_str)
+                    # Validate that args is a dictionary
+                    if not isinstance(args, dict):
+                        logger.warning(f"Tool arguments must be a dictionary, got {type(args).__name__}: {line}")
+                        continue
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Invalid JSON in tool invocation: {json_str} - Error: {str(e)}")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Unexpected error parsing JSON in tool invocation: {json_str} - Error: {str(e)}")
+                    continue
+            
+            # Validate tool name exists
+            if name not in TOOL_REGISTRY:
+                logger.warning(f"Unknown tool name: {name}")
+                continue
+                
             invocations.append((name, args))
-        except Exception:
+            logger.debug(f"Successfully parsed tool invocation: {name} with args {args}")
+            
+        except ValueError as e:
+            logger.warning(f"Error parsing tool invocation format: {line} - Error: {str(e)}")
             continue
+        except Exception as e:
+            logger.warning(f"Unexpected error parsing tool invocation: {line} - Error: {str(e)}")
+            continue
+    
+    if DEBUG_MODE and invocations:
+        logger.debug(f"Extracted {len(invocations)} tool invocations: {[name for name, _ in invocations]}")
+    
     return invocations
 
 
@@ -758,35 +801,109 @@ def execute_llm_call(conversation: List[Dict[str, str]]):
         else:
             messages.append(msg)
 
+    # Implement conversation pruning if it gets too long
+    MAX_CONVERSATION_LENGTH = 50  # Maximum number of messages to keep
+    if len(messages) > MAX_CONVERSATION_LENGTH:
+        logger.info(f"Conversation too long ({len(messages)} messages), pruning to last {MAX_CONVERSATION_LENGTH}")
+        # Keep system message and last MAX_CONVERSATION_LENGTH messages
+        messages = messages[-MAX_CONVERSATION_LENGTH:]
+
     if LOG_CONVERSATIONS:
         logger.info(f"Sending {len(messages)} messages to LLM")
         if DEBUG_MODE:
             logger.debug(f"Messages: {json.dumps(messages, indent=2)}")
 
     try:
+        start_time = time.time()
+        
         response = claude_client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=2000,
+            max_tokens=8192,
             system=system_content,
             messages=messages,
         )
         
+        end_time = time.time()
+        response_time = end_time - start_time
+        
         response_text = response.content[0].text
         
         if LOG_CONVERSATIONS:
-            logger.info(f"Received response ({len(response_text)} chars)")
+            logger.info(f"Received response ({len(response_text)} chars) in {response_time:.2f}s")
             if DEBUG_MODE:
                 logger.debug(f"Response: {response_text}")
         
         return response_text
         
+    except anthropic.APITimeoutError as e:
+        logger.error(f"API timeout error: {str(e)}")
+        raise Exception(f"Request timed out. Try breaking your request into smaller parts.")
+    except anthropic.APIConnectionError as e:
+        logger.error(f"API connection error: {str(e)}")
+        raise Exception(f"Failed to connect to Claude API. Check your internet connection.")
+    except anthropic.APIError as e:
+        logger.error(f"API error: {str(e)}")
+        raise Exception(f"Claude API error: {str(e)}")
     except Exception as e:
         logger.error(f"LLM call failed: {str(e)}")
-        raise
+        raise Exception(f"Unexpected error calling Claude: {str(e)}")
+
+
+def execute_tool_safely(name: str, tool: callable, args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Safely execute a tool with proper parameter validation and error handling.
+    :param name: Tool name for error reporting
+    :param tool: Tool function to execute
+    :param args: Arguments dictionary from JSON
+    :return: Tool execution result
+    """
+    try:
+        # Get function signature for parameter validation
+        sig = inspect.signature(tool)
+        
+        # Map arguments to function parameters
+        bound_args = {}
+        for param_name, param in sig.parameters.items():
+            if param_name in args:
+                bound_args[param_name] = args[param_name]
+            elif param.default is not inspect.Parameter.empty:
+                # Use default value
+                bound_args[param_name] = param.default
+            else:
+                # Required parameter missing
+                logger.warning(f"Missing required parameter '{param_name}' for tool '{name}'")
+                # Try to provide reasonable defaults based on type hints
+                if param.annotation == str:
+                    bound_args[param_name] = ""
+                elif param.annotation == List[str]:
+                    bound_args[param_name] = []
+                elif param.annotation == bool:
+                    bound_args[param_name] = False
+                elif param.annotation == int:
+                    bound_args[param_name] = 0
+                else:
+                    bound_args[param_name] = None
+        
+        # Execute the tool with validated parameters
+        return tool(**bound_args)
+        
+    except TypeError as e:
+        logger.error(f"Parameter validation failed for tool '{name}': {str(e)}")
+        return {"error": f"Invalid parameters for {name}: {str(e)}", "success": False}
+    except Exception as e:
+        logger.error(f"Tool execution error for '{name}': {str(e)}")
+        return {"error": f"Tool execution failed: {str(e)}", "success": False}
 
 
 def run_coding_agent_loop():
-    print(get_full_system_prompt())
+    if DEBUG_MODE:
+        print("=== ntCode AI Assistant ===\n")
+        print("Available tools:", ", ".join(TOOL_REGISTRY.keys()))
+        print(f"Debug Mode: {DEBUG_MODE}, Verbose Mode: {VERBOSE_MODE}")
+        print(f"Logging: {LOG_CONVERSATIONS}\n")
+    else:
+        print("ntCode AI Assistant - Ready!\n")
+    
     conversation = [{"role": "system", "content": get_full_system_prompt()}]
 
     while True:
@@ -796,50 +913,67 @@ def run_coding_agent_loop():
             break
         conversation.append({"role": "user", "content": user_input.strip()})
         while True:
-            assistant_response = execute_llm_call(conversation)
-            tool_invocations = extract_tool_invocations(assistant_response)
-            print(f"Assistant Response:\n {assistant_response}\n")
-            print(f"tool invocations:\n {tool_invocations}\n")
-            input("Wait")
-            if not tool_invocations:
-                print(f"{ASSISTANT_COLOR}Assistant:{RESET_COLOR}: {assistant_response}")
-                conversation.append(
-                    {"role": "assistant", "content": assistant_response}
-                )
+            try:
+                assistant_response = execute_llm_call(conversation)
+                tool_invocations = extract_tool_invocations(assistant_response)
+                
+                if DEBUG_MODE:
+                    print(f"Assistant Response:\n {assistant_response}\n")
+                    print(f"tool invocations:\n {tool_invocations}\n")
+                
+                if VERBOSE_MODE and tool_invocations:
+                    print(f"\nFound {len(tool_invocations)} tool invocation(s): {[name for name, _ in tool_invocations]}")
+                    confirm = input("Execute these tools? (y/N): ").lower().strip()
+                    if confirm not in ['y', 'yes']:
+                        print("Tool execution cancelled by user.")
+                        conversation.append({"role": "assistant", "content": assistant_response})
+                        break
+                
+                if not tool_invocations:
+                    print(f"{ASSISTANT_COLOR}Assistant:{RESET_COLOR} {assistant_response}")
+                    conversation.append({"role": "assistant", "content": assistant_response})
+                    break
+                
+                # Execute tools with improved error handling
+                for name, args in tool_invocations:
+                    if name not in TOOL_REGISTRY:
+                        logger.error(f"Unknown tool: {name}")
+                        continue
+                        
+                    tool = TOOL_REGISTRY[name]
+                    try:
+                        if DEBUG_MODE:
+                            print(f"Executing tool: {name} with args: {args}")
+                        
+                        # Execute tool with dynamic parameter mapping
+                        resp = execute_tool_safely(name, tool, args)
+                        
+                        if DEBUG_MODE:
+                            print(f"Tool result: {resp}")
+                        
+                        # Add tool result to conversation
+                        conversation.append({
+                            "role": "user", 
+                            "content": f"tool_result({json.dumps(resp, ensure_ascii=False)})"
+                        })
+                        
+                    except Exception as e:
+                        logger.error(f"Tool execution failed for {name}: {str(e)}")
+                        error_result = {
+                            "error": f"Tool execution failed: {str(e)}",
+                            "tool_name": name,
+                            "success": False
+                        }
+                        conversation.append({
+                            "role": "user", 
+                            "content": f"tool_result({json.dumps(error_result)})"
+                        })
+                        
+            except Exception as e:
+                logger.error(f"Assistant loop error: {str(e)}")
+                print(f"{ASSISTANT_COLOR}Error:{RESET_COLOR} {str(e)}")
+                print("Please try again with a shorter or simpler request.")
                 break
-            for name, args in tool_invocations:
-                tool = TOOL_REGISTRY[name]
-                resp = ""
-                print(name, args)
-                if name == "read_file":
-                    resp = tool(args.get("filename", "."))
-                elif name == "list_files":
-                    resp = tool(args.get("path", "."))
-                elif name == "edit_file":
-                    resp = tool(
-                        args.get("path", "."),
-                        args.get("old_str", ""),
-                        args.get("new_str", ""),
-                    )
-                elif name == "git_add":
-                    resp = tool(args.get("file_paths", []))
-                elif name == "git_commit":
-                    resp = tool(
-                        args.get("message", ""), args.get("auto_generate", False)
-                    )
-                elif name == "git_status":
-                    resp = tool()
-                elif name == "git_diff":
-                    resp = tool(
-                        args.get("file_path", ""), args.get("staged", False)
-                    )
-                elif name == "git_log":
-                    resp = tool(
-                        args.get("max_entries", 10), args.get("file_path", "")
-                    )
-                conversation.append(
-                    {"role": "user", "content": f"tool_result({json.dumps(resp)})"}
-                )
                 #                print(conversation)
 
 

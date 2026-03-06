@@ -19,7 +19,6 @@ from dotenv import load_dotenv
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-
 YOU_COLOR = "\u001b[94m"
 ASSISTANT_COLOR = "\u001b[93m"
 RESET_COLOR = "\u001b[0m"
@@ -29,7 +28,7 @@ load_dotenv()
 # Configuration Constants
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit
 MAX_CONVERSATION_LENGTH = 50  # Maximum number of messages to keep
-DEFAULT_MODEL = "claude-3-5-sonnet-20241022"  # Default Claude model
+DEFAULT_MODEL = "claude-sonnet-4-6"  # Default Claude model
 GIT_TIMEOUT = 30  # Git command timeout in seconds
 API_MAX_TOKENS = 8192  # Maximum tokens for API requests
 
@@ -42,23 +41,27 @@ claude_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 # Debug Configuration
 DEBUG_MODE = os.environ.get("NTCODE_DEBUG", "false").lower() in ["true", "1", "yes"]
 VERBOSE_MODE = os.environ.get("NTCODE_VERBOSE", "false").lower() in ["true", "1", "yes"]
-LOG_CONVERSATIONS = os.environ.get("NTCODE_LOG_CONVERSATIONS", "true").lower() in ["true", "1", "yes"]
+LOG_CONVERSATIONS = os.environ.get("NTCODE_LOG_CONVERSATIONS", "true").lower() in [
+    "true",
+    "1",
+    "yes",
+]
 
 # Configure logging
 log_handlers = []
 if DEBUG_MODE:
     log_handlers.append(logging.StreamHandler(sys.stdout))
 if LOG_CONVERSATIONS:
-    log_handlers.append(logging.FileHandler('ntcode.log', mode='a'))
+    log_handlers.append(logging.FileHandler("ntcode.log", mode="a"))
 if not log_handlers:  # If no logging enabled, use null handler
     log_handlers.append(logging.NullHandler())
 
 logging.basicConfig(
     level=logging.DEBUG if DEBUG_MODE else logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=log_handlers
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=log_handlers,
 )
-logger = logging.getLogger('ntCode')
+logger = logging.getLogger("ntCode")
 
 
 def validate_file_access(path: Path) -> None:
@@ -339,64 +342,74 @@ def git_status_tool() -> Dict[str, Any]:
     try:
         # Validate we're in a git repo
         validate_git_operation()
-        
+
         # Get porcelain status for easy parsing
         result = run_git_command(["status", "--porcelain"])
-        
+
         if not result["success"]:
             return {
                 "error": f"Git status failed: {result.get('stderr', 'Unknown error')}",
-                "success": False
+                "success": False,
             }
-        
+
         # Parse the porcelain output
         staged = []
         unstaged = []
         untracked = []
-        
+
         for line in result["stdout"].splitlines():
             if len(line) < 3:
                 continue
-                
+
             status_code = line[:2]
             filename = line[3:].strip()
-            
+
             # First character is staged status, second is unstaged
             staged_status = status_code[0]
             unstaged_status = status_code[1]
-            
-            if staged_status in ['A', 'M', 'D', 'R', 'C']:
-                action = {'A': 'added', 'M': 'modified', 'D': 'deleted', 'R': 'renamed', 'C': 'copied'}.get(staged_status, 'modified')
+
+            if staged_status in ["A", "M", "D", "R", "C"]:
+                action = {
+                    "A": "added",
+                    "M": "modified",
+                    "D": "deleted",
+                    "R": "renamed",
+                    "C": "copied",
+                }.get(staged_status, "modified")
                 staged.append({"file": filename, "action": action})
-            
-            if unstaged_status in ['M', 'D']:
-                action = {'M': 'modified', 'D': 'deleted'}.get(unstaged_status, 'modified')
+
+            if unstaged_status in ["M", "D"]:
+                action = {"M": "modified", "D": "deleted"}.get(
+                    unstaged_status, "modified"
+                )
                 unstaged.append({"file": filename, "action": action})
-            
-            if status_code == '??':
+
+            if status_code == "??":
                 untracked.append(filename)
-        
+
         # Get current branch info
         branch_result = run_git_command(["branch", "--show-current"])
-        current_branch = branch_result["stdout"].strip() if branch_result["success"] else "unknown"
-        
+        current_branch = (
+            branch_result["stdout"].strip() if branch_result["success"] else "unknown"
+        )
+
         # Check if repository is clean
         is_clean = len(staged) == 0 and len(unstaged) == 0 and len(untracked) == 0
-        
+
         return {
             "success": True,
             "current_branch": current_branch,
             "is_clean": is_clean,
             "staged": staged,
-            "unstaged": unstaged, 
+            "unstaged": unstaged,
             "untracked": untracked,
             "summary": {
                 "staged_count": len(staged),
                 "unstaged_count": len(unstaged),
-                "untracked_count": len(untracked)
-            }
+                "untracked_count": len(untracked),
+            },
         }
-        
+
     except Exception as e:
         return {"error": f"Git status operation failed: {str(e)}", "success": False}
 
@@ -411,13 +424,13 @@ def git_diff_tool(file_path: str = "", staged: bool = False) -> Dict[str, Any]:
     try:
         # Validate we're in a git repo
         validate_git_operation()
-        
+
         # Build git diff command
         cmd_args = ["diff"]
-        
+
         if staged:
             cmd_args.append("--cached")  # Show staged changes
-        
+
         # Add file path if specified
         if file_path:
             try:
@@ -430,25 +443,25 @@ def git_diff_tool(file_path: str = "", staged: bool = False) -> Dict[str, Any]:
             except Exception as e:
                 return {
                     "error": f"Invalid file path {file_path}: {str(e)}",
-                    "success": False
+                    "success": False,
                 }
-        
+
         # Execute git diff
         result = run_git_command(cmd_args)
-        
+
         if not result["success"]:
             return {
                 "error": f"Git diff failed: {result.get('stderr', 'Unknown error')}",
-                "success": False
+                "success": False,
             }
-        
+
         diff_output = result["stdout"]
-        
+
         # Parse diff output for summary info
         files_changed = []
         lines_added = 0
         lines_removed = 0
-        
+
         current_file = None
         for line in diff_output.splitlines():
             if line.startswith("diff --git"):
@@ -462,14 +475,14 @@ def git_diff_tool(file_path: str = "", staged: bool = False) -> Dict[str, Any]:
                 lines_added += 1
             elif line.startswith("-") and not line.startswith("---"):
                 lines_removed += 1
-        
+
         # Determine diff scope for summary
         scope = "staged" if staged else "unstaged"
         target = f" for {file_path}" if file_path else ""
-        
+
         # Check if there are any changes
         has_changes = bool(diff_output.strip())
-        
+
         return {
             "success": True,
             "diff_output": diff_output,
@@ -481,10 +494,10 @@ def git_diff_tool(file_path: str = "", staged: bool = False) -> Dict[str, Any]:
                 "files_count": len(files_changed),
                 "lines_added": lines_added,
                 "lines_removed": lines_removed,
-                "description": f"Showing {scope} changes{target}"
-            }
+                "description": f"Showing {scope} changes{target}",
+            },
         }
-        
+
     except Exception as e:
         return {"error": f"Git diff operation failed: {str(e)}", "success": False}
 
@@ -499,16 +512,21 @@ def git_log_tool(max_entries: int = 10, file_path: str = "") -> Dict[str, Any]:
     try:
         # Validate we're in a git repo
         validate_git_operation()
-        
+
         # Validate max_entries parameter
         if max_entries < 1:
             max_entries = 1
         elif max_entries > 100:  # Reasonable upper limit
             max_entries = 100
-        
+
         # Build git log command
-        cmd_args = ["log", f"--max-count={max_entries}", "--pretty=format:%H|%an|%ae|%ad|%s", "--date=iso"]
-        
+        cmd_args = [
+            "log",
+            f"--max-count={max_entries}",
+            "--pretty=format:%H|%an|%ae|%ad|%s",
+            "--date=iso",
+        ]
+
         # Add file path if specified
         if file_path:
             try:
@@ -522,28 +540,28 @@ def git_log_tool(max_entries: int = 10, file_path: str = "") -> Dict[str, Any]:
             except Exception as e:
                 return {
                     "error": f"Invalid file path {file_path}: {str(e)}",
-                    "success": False
+                    "success": False,
                 }
-        
+
         # Execute git log
         result = run_git_command(cmd_args)
-        
+
         if not result["success"]:
             return {
                 "error": f"Git log failed: {result.get('stderr', 'Unknown error')}",
-                "success": False
+                "success": False,
             }
-        
+
         log_output = result["stdout"].strip()
-        
+
         # Parse log output into structured data
         commits = []
         if log_output:
             for line in log_output.splitlines():
                 if not line.strip():
                     continue
-                
-                parts = line.split('|')
+
+                parts = line.split("|")
                 if len(parts) >= 5:
                     commit = {
                         "hash": parts[0],
@@ -551,10 +569,12 @@ def git_log_tool(max_entries: int = 10, file_path: str = "") -> Dict[str, Any]:
                         "author_name": parts[1],
                         "author_email": parts[2],
                         "date": parts[3],
-                        "message": '|'.join(parts[4:])  # Join back in case message contained '|'
+                        "message": "|".join(
+                            parts[4:]
+                        ),  # Join back in case message contained '|'
                     }
                     commits.append(commit)
-        
+
         # Get additional statistics if not filtering by file
         total_commits = len(commits)
         if not file_path and commits:
@@ -565,10 +585,10 @@ def git_log_tool(max_entries: int = 10, file_path: str = "") -> Dict[str, Any]:
                     total_commits = int(count_result["stdout"].strip())
                 except ValueError:
                     total_commits = len(commits)
-        
+
         # Determine scope for summary
         scope = f" for {file_path}" if file_path else ""
-        
+
         return {
             "success": True,
             "commits": commits,
@@ -579,10 +599,10 @@ def git_log_tool(max_entries: int = 10, file_path: str = "") -> Dict[str, Any]:
             "summary": {
                 "total_commits_in_repo": total_commits if not file_path else "unknown",
                 "entries_shown": len(commits),
-                "description": f"Showing last {len(commits)} commit(s){scope}"
-            }
+                "description": f"Showing last {len(commits)} commit(s){scope}",
+            },
         }
-        
+
     except Exception as e:
         return {"error": f"Git log operation failed: {str(e)}", "success": False}
 
@@ -746,22 +766,28 @@ def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
         try:
             after = line[len("tool:") :].strip()
             if "(" not in after:
-                logger.warning(f"Invalid tool invocation format (missing parentheses): {line}")
+                logger.warning(
+                    f"Invalid tool invocation format (missing parentheses): {line}"
+                )
                 continue
-            
+
             name, rest = after.split("(", 1)
             name = name.strip()
-            
+
             if not name:
-                logger.warning(f"Invalid tool invocation format (empty tool name): {line}")
+                logger.warning(
+                    f"Invalid tool invocation format (empty tool name): {line}"
+                )
                 continue
-                
+
             if not rest.endswith(")"):
-                logger.warning(f"Invalid tool invocation format (missing closing parenthesis): {line}")
+                logger.warning(
+                    f"Invalid tool invocation format (missing closing parenthesis): {line}"
+                )
                 continue
-                
+
             json_str = rest[:-1].strip()
-            
+
             # Handle empty JSON case
             if not json_str:
                 args = {}
@@ -770,33 +796,47 @@ def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
                     args = json.loads(json_str)
                     # Validate that args is a dictionary
                     if not isinstance(args, dict):
-                        logger.warning(f"Tool arguments must be a dictionary, got {type(args).__name__}: {line}")
+                        logger.warning(
+                            f"Tool arguments must be a dictionary, got {type(args).__name__}: {line}"
+                        )
                         continue
                 except json.JSONDecodeError as e:
-                    logger.warning(f"Invalid JSON in tool invocation: {json_str} - Error: {str(e)}")
+                    logger.warning(
+                        f"Invalid JSON in tool invocation: {json_str} - Error: {str(e)}"
+                    )
                     continue
                 except Exception as e:
-                    logger.warning(f"Unexpected error parsing JSON in tool invocation: {json_str} - Error: {str(e)}")
+                    logger.warning(
+                        f"Unexpected error parsing JSON in tool invocation: {json_str} - Error: {str(e)}"
+                    )
                     continue
-            
+
             # Validate tool name exists
             if name not in TOOL_REGISTRY:
                 logger.warning(f"Unknown tool name: {name}")
                 continue
-                
+
             invocations.append((name, args))
-            logger.debug(f"Successfully parsed tool invocation: {name} with args {args}")
-            
+            logger.debug(
+                f"Successfully parsed tool invocation: {name} with args {args}"
+            )
+
         except ValueError as e:
-            logger.warning(f"Error parsing tool invocation format: {line} - Error: {str(e)}")
+            logger.warning(
+                f"Error parsing tool invocation format: {line} - Error: {str(e)}"
+            )
             continue
         except Exception as e:
-            logger.warning(f"Unexpected error parsing tool invocation: {line} - Error: {str(e)}")
+            logger.warning(
+                f"Unexpected error parsing tool invocation: {line} - Error: {str(e)}"
+            )
             continue
-    
+
     if DEBUG_MODE and invocations:
-        logger.debug(f"Extracted {len(invocations)} tool invocations: {[name for name, _ in invocations]}")
-    
+        logger.debug(
+            f"Extracted {len(invocations)} tool invocations: {[name for name, _ in invocations]}"
+        )
+
     return invocations
 
 
@@ -811,7 +851,9 @@ def execute_llm_call(conversation: List[Dict[str, str]]):
 
     # Implement conversation pruning if it gets too long
     if len(messages) > MAX_CONVERSATION_LENGTH:
-        logger.info(f"Conversation too long ({len(messages)} messages), pruning to last {MAX_CONVERSATION_LENGTH}")
+        logger.info(
+            f"Conversation too long ({len(messages)} messages), pruning to last {MAX_CONVERSATION_LENGTH}"
+        )
         # Keep system message and last MAX_CONVERSATION_LENGTH messages
         messages = messages[-MAX_CONVERSATION_LENGTH:]
 
@@ -822,29 +864,31 @@ def execute_llm_call(conversation: List[Dict[str, str]]):
 
     try:
         start_time = time.time()
-        
+
         # Get model from environment or use default
         model = os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
-        
+
         response = claude_client.messages.create(
             model=model,
             max_tokens=API_MAX_TOKENS,
             system=system_content,
             messages=messages,
         )
-        
+
         end_time = time.time()
         response_time = end_time - start_time
-        
+
         response_text = response.content[0].text
-        
+
         if LOG_CONVERSATIONS:
-            logger.info(f"Received response ({len(response_text)} chars) in {response_time:.2f}s")
+            logger.info(
+                f"Received response ({len(response_text)} chars) in {response_time:.2f}s"
+            )
             if DEBUG_MODE:
                 logger.debug(f"Response: {response_text}")
-        
+
         return response_text
-        
+
     except anthropic.APITimeoutError as e:
         logger.error(f"API timeout error: {str(e)}")
         return f"⏱️ Request timed out. The conversation may be too long or the request too complex. Try:\n- Breaking your request into smaller parts\n- Starting a fresh conversation\n- Reducing the amount of context"
@@ -865,7 +909,9 @@ def execute_llm_call(conversation: List[Dict[str, str]]):
         return f"💥 Unexpected error calling Claude: {str(e)}"
 
 
-def execute_tool_safely(name: str, tool: callable, args: Dict[str, Any]) -> Dict[str, Any]:
+def execute_tool_safely(
+    name: str, tool: callable, args: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Safely execute a tool with proper parameter validation and error handling.
     :param name: Tool name for error reporting
@@ -876,7 +922,7 @@ def execute_tool_safely(name: str, tool: callable, args: Dict[str, Any]) -> Dict
     try:
         # Get function signature for parameter validation
         sig = inspect.signature(tool)
-        
+
         # Map arguments to function parameters
         bound_args = {}
         for param_name, param in sig.parameters.items():
@@ -887,7 +933,9 @@ def execute_tool_safely(name: str, tool: callable, args: Dict[str, Any]) -> Dict
                 bound_args[param_name] = param.default
             else:
                 # Required parameter missing
-                logger.warning(f"Missing required parameter '{param_name}' for tool '{name}'")
+                logger.warning(
+                    f"Missing required parameter '{param_name}' for tool '{name}'"
+                )
                 # Try to provide reasonable defaults based on type hints
                 if param.annotation == str:
                     bound_args[param_name] = ""
@@ -899,10 +947,10 @@ def execute_tool_safely(name: str, tool: callable, args: Dict[str, Any]) -> Dict
                     bound_args[param_name] = 0
                 else:
                     bound_args[param_name] = None
-        
+
         # Execute the tool with validated parameters
         return tool(**bound_args)
-        
+
     except TypeError as e:
         logger.error(f"Parameter validation failed for tool '{name}': {str(e)}")
         return {"error": f"Invalid parameters for {name}: {str(e)}", "success": False}
@@ -919,7 +967,7 @@ def run_coding_agent_loop():
         print(f"Logging: {LOG_CONVERSATIONS}\n")
     else:
         print("ntCode AI Assistant - Ready!\n")
-    
+
     conversation = [{"role": "system", "content": get_full_system_prompt()}]
 
     while True:
@@ -931,75 +979,97 @@ def run_coding_agent_loop():
         while True:
             try:
                 assistant_response = execute_llm_call(conversation)
-                
+
                 # Check if we got an error message instead of normal response
-                if isinstance(assistant_response, str) and (assistant_response.startswith("⏱️") or 
-                    assistant_response.startswith("🚫") or assistant_response.startswith("🌐") or 
-                    assistant_response.startswith("🔑") or assistant_response.startswith("❌") or 
-                    assistant_response.startswith("💥")):
+                if isinstance(assistant_response, str) and (
+                    assistant_response.startswith("⏱️")
+                    or assistant_response.startswith("🚫")
+                    or assistant_response.startswith("🌐")
+                    or assistant_response.startswith("🔑")
+                    or assistant_response.startswith("❌")
+                    or assistant_response.startswith("💥")
+                ):
                     print(f"{ASSISTANT_COLOR}Error:{RESET_COLOR} {assistant_response}")
                     break
-                
+
                 tool_invocations = extract_tool_invocations(assistant_response)
-                
+
                 if DEBUG_MODE:
                     print(f"Assistant Response:\n {assistant_response}\n")
                     print(f"tool invocations:\n {tool_invocations}\n")
-                
+
                 if VERBOSE_MODE and tool_invocations:
-                    print(f"\nFound {len(tool_invocations)} tool invocation(s): {[name for name, _ in tool_invocations]}")
+                    print(
+                        f"\nFound {len(tool_invocations)} tool invocation(s): {[name for name, _ in tool_invocations]}"
+                    )
                     confirm = input("Execute these tools? (y/N): ").lower().strip()
-                    if confirm not in ['y', 'yes']:
+                    if confirm not in ["y", "yes"]:
                         print("Tool execution cancelled by user.")
-                        conversation.append({"role": "assistant", "content": assistant_response})
+                        conversation.append(
+                            {"role": "assistant", "content": assistant_response}
+                        )
                         break
-                
+
                 if not tool_invocations:
-                    print(f"{ASSISTANT_COLOR}Assistant:{RESET_COLOR} {assistant_response}")
-                    conversation.append({"role": "assistant", "content": assistant_response})
+                    print(
+                        f"{ASSISTANT_COLOR}Assistant:{RESET_COLOR} {assistant_response}"
+                    )
+                    conversation.append(
+                        {"role": "assistant", "content": assistant_response}
+                    )
                     break
-                
+
+                # Record assistant's tool-call message in conversation history
+                # before appending tool results, so Claude sees its own tool
+                # invocation in context and doesn't duplicate it.
+                conversation.append(
+                    {"role": "assistant", "content": assistant_response}
+                )
+
                 # Execute tools with improved error handling
                 for name, args in tool_invocations:
                     if name not in TOOL_REGISTRY:
                         logger.error(f"Unknown tool: {name}")
                         continue
-                        
+
                     tool = TOOL_REGISTRY[name]
                     try:
                         if DEBUG_MODE:
                             print(f"Executing tool: {name} with args: {args}")
-                        
+
                         # Execute tool with dynamic parameter mapping
                         resp = execute_tool_safely(name, tool, args)
-                        
+
                         if DEBUG_MODE:
                             print(f"Tool result: {resp}")
-                        
+
                         # Add tool result to conversation
-                        conversation.append({
-                            "role": "user", 
-                            "content": f"tool_result({json.dumps(resp, ensure_ascii=False)})"
-                        })
-                        
+                        conversation.append(
+                            {
+                                "role": "user",
+                                "content": f"tool_result({json.dumps(resp, ensure_ascii=False)})",
+                            }
+                        )
+
                     except Exception as e:
                         logger.error(f"Tool execution failed for {name}: {str(e)}")
                         error_result = {
                             "error": f"Tool execution failed: {str(e)}",
                             "tool_name": name,
-                            "success": False
+                            "success": False,
                         }
-                        conversation.append({
-                            "role": "user", 
-                            "content": f"tool_result({json.dumps(error_result)})"
-                        })
-                        
+                        conversation.append(
+                            {
+                                "role": "user",
+                                "content": f"tool_result({json.dumps(error_result)})",
+                            }
+                        )
+
             except Exception as e:
                 logger.error(f"Assistant loop error: {str(e)}")
                 print(f"{ASSISTANT_COLOR}Error:{RESET_COLOR} {str(e)}")
                 print("Please try again with a shorter or simpler request.")
                 break
-
 
 
 if __name__ == "__main__":

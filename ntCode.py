@@ -880,9 +880,15 @@ def execute_llm_call(conversation: List[Dict[str, str]]):
 
         response_text = response.content[0].text
 
+        # Extract token usage from the response
+        input_tokens = response.usage.input_tokens if response.usage else 0
+        output_tokens = response.usage.output_tokens if response.usage else 0
+
         if LOG_CONVERSATIONS:
             logger.info(
-                f"Received response ({len(response_text)} chars) in {response_time:.2f}s"
+                f"Received response ({len(response_text)} chars) in {response_time:.2f}s "
+                f"| tokens: {input_tokens} in / {output_tokens} out "
+                f"(total: {input_tokens + output_tokens})"
             )
             if DEBUG_MODE:
                 logger.debug(f"Response: {response_text}")

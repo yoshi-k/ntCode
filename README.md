@@ -1,200 +1,147 @@
-# ntCode AI Coding Assistant
+# NL-to-SQL Tool
 
-An AI-powered coding assistant that integrates with Claude AI to provide secure file manipulation, git workflow automation, and interactive development assistance. Built with security-first principles and comprehensive tool integration.
-
-## 🚀 Features
-
-- **Secure File Operations**: Read, edit, and list files with comprehensive path validation and access controls
-- **Complete Git Integration**: Full workflow automation with status, diff, log, add, and commit operations
-- **AI-Powered Assistance**: Natural language interaction with Claude AI for coding tasks
-- **Security-First Design**: Restricted file system access, path validation, and protection against common vulnerabilities
-- **Multiple Execution Modes**: Debug, verbose, and normal modes for different use cases
-- **Comprehensive Logging**: Detailed conversation and operation logging for debugging and audit trails
-
-## 📋 Requirements
-
-- Python 3.7+
-- Anthropic API key
-- Git repository (for git operations)
-- Required Python packages (see `requirements.txt`)
-
-## ⚡ Quick Start
-
-1. **Clone and setup**:
-   ```bash
-   git clone <repository-url>
-   cd ntCode
-   pip install -r requirements.txt
-   ```
-
-2. **Set up your API key**:
-   ```bash
-   cp .env.example .env
-   # Edit .env and add your ANTHROPIC_API_KEY
-   ```
-
-3. **Run the assistant**:
-   ```bash
-   python ntCode.py
-   ```
-
-## 🔧 Configuration
-
-### Environment Variables
-
-| Variable | Values | Default | Description |
-|----------|--------|---------|-------------|
-| `ANTHROPIC_API_KEY` | string | **required** | Your Anthropic API key |
-| `NTCODE_DEBUG` | true/false | false | Enable detailed debugging and logging |
-| `NTCODE_VERBOSE` | true/false | false | Enable interactive tool approval |
-| `NTCODE_LOG_CONVERSATIONS` | true/false | true | Enable conversation logging to file |
-
-### Execution Modes
-
-#### Normal Mode (Default)
-```bash
-python ntCode.py
-```
-- Clean execution without debug output
-- Tools execute automatically
-- Conversations logged to `ntcode.log`
-- Best for regular usage
-
-#### Debug Mode
-```bash
-NTCODE_DEBUG=true python ntCode.py
-```
-- Detailed logging to console and file
-- Full conversation history logged
-- API request/response details shown
-- Tool invocation details logged
-- Best for troubleshooting and development
-
-#### Verbose Mode
-```bash
-NTCODE_VERBOSE=true python ntCode.py
-```
-- Interactive tool approval required
-- User can see and approve each tool execution before it runs
-- Helpful for security verification and learning
-- Best for testing new prompts or when security is critical
-
-#### Combined Debug + Verbose Mode
-```bash
-NTCODE_DEBUG=true NTCODE_VERBOSE=true python ntCode.py
-```
-- Full debugging with interactive approval
-- Maximum visibility and control
-- Best for development and security auditing
-
-## 🛠️ Available Tools
-
-### File Operations
-- **`read_file`** - Read file contents with encoding detection
-- **`edit_file`** - Replace text or create new files
-- **`list_files`** - List directory contents
-
-### Git Operations
-- **`git_status`** - Show repository status (staged, unstaged, untracked files)
-- **`git_add`** - Stage files for commit with validation
-- **`git_commit`** - Smart commit with optional auto-generated messages
-- **`git_diff`** - Display file differences (staged or unstaged)
-- **`git_log`** - Show commit history with filtering options
-
-## 🔒 Security Features
-
-- **Path Validation**: All file operations are restricted to current directory and subdirectories
-- **File Size Limits**: 10MB maximum file size for read/edit operations
-- **Access Controls**: Protection against path traversal attacks and unauthorized access
-- **Git Safety**: Git operations are validated and secured within repository bounds
-- **Symlink Protection**: Safe handling of symbolic links with target validation
-- **Interactive Approval**: Verbose mode allows manual approval of each tool execution
-
-## 📁 Project Structure
-
-```
-ntCode/
-├── ntCode.py          # Main application
-├── outline.md         # Project roadmap and ideas
-├── requirements.txt   # Python dependencies
-├── tests/            # Test directory
-│   └── test_api_key.py
-├── .env.example      # Environment variables template
-├── .gitignore        # Git ignore rules
-└── README.md         # This file
-```
-
-## 💡 Usage Examples
-
-### Basic File Operations
-```
-You: Read the contents of main.py
-Assistant: tool: read_file({"filename": "main.py"})
-```
-
-### Git Workflow
-```
-You: Check git status and stage all modified files
-Assistant: tool: git_status()
-# ... shows current status ...
-Assistant: tool: git_add({"file_paths": ["modified_file.py", "another_file.js"]})
-```
-
-### Code Editing
-```
-You: Replace the function definition in utils.py
-Assistant: tool: edit_file({"path": "utils.py", "old_str": "def old_function():", "new_str": "def new_function():"})
-```
-
-## 📊 Logging
-
-- **ntcode.log**: Contains conversation logs, tool executions, and debug information
-- Automatically created when `NTCODE_LOG_CONVERSATIONS=true` (default)
-- Useful for reviewing conversation history and debugging issues
-- Debug mode provides additional detailed logging
-
-## 🐛 Known Issues
-
-1. **Timeout with very long requests** - Large conversations may cause API timeouts
-2. **JSON parsing crashes** - Malformed JSON from Claude can crash the application
-3. **Conversation memory growth** - Long sessions accumulate conversation history without pruning
-
-## 🗺️ Roadmap
-
-### Planned Architecture
-- **Frontend**: Display messages and handle UI interactions
-- **Middleware**: Route messages to tools and communicate with LLM
-- **Backend**: Tool implementations and LLM provider abstractions
-
-### Future Features
-- **Issue Tracker Integration**: Read and manage bugs from issue trackers
-- **Research Tools**: Internet research capabilities
-- **Enhanced Git Features**: Intelligent commit messages and workflow automation
-- **Plugin System**: Extensible tool architecture
-- **Web Interface**: Optional web-based UI
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📄 License
-
-This project is inspired by "The Emperor Has No Clothes: How to Code Claude Code in 200 Lines of Code" by Mihail Eric (https://www.mihaileric.com/The-Emperor-Has-No-Clothes/) and adapted by Joerg Kulbartz.
-
-## 🙏 Acknowledgments
-
-- Original implementation concept by Mihail Eric
-- Enhanced and secured by Joerg Kulbartz (joerg@kulbartz.de)
-- Built with Claude AI by Anthropic
-
-## 📞 Support
-
-For issues, questions, or contributions, please open an issue on the repository or contact the maintainer.
+A command-line tool that converts **natural language queries into SQL** using the OpenAI API. Point it at any SQLite database, describe what you want in plain English, and get results back — no SQL knowledge required.
 
 ---
 
-**Note**: This is an experimental AI coding assistant. Always review code changes and ensure you have backups before making significant modifications to your projects.
+## Features
+
+- 🔍 **Natural language to SQL** — powered by GPT-4o
+- 🗄️ **Auto schema detection** — reads your SQLite database structure automatically
+- 🖥️ **Interactive mode** — run multiple queries in a single session
+- 📋 **Flexible output** — display results as a formatted table or JSON
+- ⚡ **Simple CLI** — easy to use from the command line
+
+---
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| Language | Python 3.10+ |
+| LLM | OpenAI GPT-4o (via `openai` SDK) |
+| Database | SQLite (built-in `sqlite3`) |
+| CLI | `argparse` |
+| Formatting | `tabulate` |
+
+---
+
+## Prerequisites
+
+- Python 3.10 or higher
+- An [OpenAI API key](https://platform.openai.com/api-keys)
+
+---
+
+## Installation
+
+1. **Clone the repository:**
+   ```bash
+   git clone <repo-url>
+   cd <repo-directory>
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   pip install openai tabulate
+   ```
+
+3. **Set your OpenAI API key:**
+   ```bash
+   export OPENAI_API_KEY="your-api-key-here"
+   ```
+
+---
+
+## Usage
+
+### Single Query
+
+Run a one-off natural language query against your database:
+
+```bash
+python ntCode.py path/to/database.db --query "Show me all users who signed up last month"
+```
+
+### Interactive Mode
+
+Start an interactive session to run multiple queries without restarting the tool:
+
+```bash
+python ntCode.py path/to/database.db --interactive
+```
+
+Type `exit` to quit the interactive session.
+
+### Output Format
+
+Results are displayed as a grid table by default. Switch to JSON output with `--format json`:
+
+```bash
+python ntCode.py path/to/database.db --query "List all products" --format json
+```
+
+### CLI Reference
+
+```
+python ntCode.py <db> [options]
+
+positional arguments:
+  db                    Path to the SQLite database file
+
+options:
+  -q, --query QUERY     Natural language query to run
+  -i, --interactive     Run in interactive mode
+  -f, --format FORMAT   Output format: table (default) or json
+  -h, --help            Show this help message and exit
+```
+
+---
+
+## Example
+
+```
+$ python ntCode.py mydata.db --query "How many orders were placed per customer?"
+
+Generated SQL:
+SELECT customer_id, COUNT(*) AS order_count FROM orders GROUP BY customer_id;
+
++---------------+-------------+
+| customer_id   | order_count |
++===============+=============+
+| 1             | 5           |
+| 2             | 3           |
+| 3             | 8           |
++---------------+-------------+
+```
+
+---
+
+## How It Works
+
+1. **Schema Detection** — Reads all tables and columns from your SQLite database.
+2. **Prompt Building** — Constructs a prompt containing the schema and your natural language query.
+3. **OpenAI Request** — Sends the prompt to GPT-4o, which returns a valid SQL query.
+4. **SQL Execution** — Runs the generated SQL against the database.
+5. **Result Formatting** — Displays the results as a table or JSON.
+
+---
+
+## Target Audience
+
+Developers and data analysts who want to query SQLite databases without writing SQL manually.
+
+---
+
+## Future Enhancements
+
+- Support for additional databases (PostgreSQL, MySQL)
+- Query history and caching
+- Web UI
+- Multiple LLM backends (Anthropic, local models)
+
+---
+
+## License
+
+MIT

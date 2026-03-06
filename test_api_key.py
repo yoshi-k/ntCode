@@ -10,7 +10,7 @@ print("\nTesting API key...")
 
 try:
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-sonnet-4-6",  # Match DEFAULT_MODEL in ntCode.py
         max_tokens=64,
         messages=[{"role": "user", "content": "Reply with API key is working!"}],
     )

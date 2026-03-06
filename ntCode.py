@@ -31,6 +31,7 @@ MAX_CONVERSATION_LENGTH = 50  # Maximum number of messages to keep
 DEFAULT_MODEL = "claude-sonnet-4-6"  # Default Claude model
 GIT_TIMEOUT = 30  # Git command timeout in seconds
 API_MAX_TOKENS = 8192  # Maximum tokens for API requests
+API_TIMEOUT = float(os.environ.get("NTCODE_API_TIMEOUT", "60"))  # API call timeout in seconds
 
 # Security Configuration
 ALLOWED_BASE_PATHS = [Path.cwd()]  # Only allow current directory and subdirectories
@@ -849,13 +850,8 @@ def execute_llm_call(conversation: List[Dict[str, str]]):
         else:
             messages.append(msg)
 
-    # Implement conversation pruning if it gets too long
-    if len(messages) > MAX_CONVERSATION_LENGTH:
-        logger.info(
-            f"Conversation too long ({len(messages)} messages), pruning to last {MAX_CONVERSATION_LENGTH}"
-        )
-        # Keep system message and last MAX_CONVERSATION_LENGTH messages
-        messages = messages[-MAX_CONVERSATION_LENGTH:]
+    # Conversation pruning is handled in run_coding_agent_loop() before this call.
+    # No pruning here to avoid modifying a local copy without effect on the caller.
 
     if LOG_CONVERSATIONS:
         logger.info(f"Sending {len(messages)} messages to LLM")
@@ -873,6 +869,7 @@ def execute_llm_call(conversation: List[Dict[str, str]]):
             max_tokens=API_MAX_TOKENS,
             system=system_content,
             messages=messages,
+            timeout=API_TIMEOUT,
         )
 
         end_time = time.time()
@@ -984,6 +981,17 @@ def run_coding_agent_loop():
         conversation.append({"role": "user", "content": user_input.strip()})
         while True:
             try:
+                # Prune conversation if it grows too long.
+                # Always preserve index 0 (system prompt) and prune the middle.
+                non_system = [m for m in conversation if m["role"] != "system"]
+                if len(non_system) > MAX_CONVERSATION_LENGTH:
+                    logger.info(
+                        f"Conversation too long ({len(non_system)} messages), "
+                        f"pruning to last {MAX_CONVERSATION_LENGTH}"
+                    )
+                    system_msgs = [m for m in conversation if m["role"] == "system"]
+                    conversation = system_msgs + non_system[-MAX_CONVERSATION_LENGTH:]
+
                 assistant_response = execute_llm_call(conversation)
 
                 # Check if we got an error message instead of normal response

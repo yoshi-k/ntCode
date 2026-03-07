@@ -23,9 +23,6 @@ from frontend.agent_loop import run_coding_agent_loop  # noqa: E402
 
 if __name__ == "__main__":
     run_coding_agent_loop()
-
-# Configuration Constants
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit
 MAX_CONVERSATION_LENGTH = 50  # Maximum number of messages to keep
 DEFAULT_MODEL = "claude-sonnet-4-6"  # Default Claude model
 GIT_TIMEOUT = 30  # Git command timeout in seconds

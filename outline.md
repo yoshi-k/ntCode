@@ -7,7 +7,7 @@ and copied from there by Joerg Kulbartz joerg@kulbartz.de
 ## Restart
 Save conversation to file, such that one can restart a new version of ntCoder
 
-Restart conversation from a clean cached version. Just systemprompt. 
+Reset conversation from a clean cached version. Just systemprompt. 
 ## Tests
 System needs ability to conduct test before git.
 (Or perhaps tests and test of test coverage as git action.) 

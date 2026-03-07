@@ -3,7 +3,14 @@ ntCoder is a exploration of ai coder written by vibecoding. The original impleme
 > Implementation of The Emperor Has No Clothes: How to Code Claude Code in 200 Lines of Code
 > https://www.mihaileric.com/The-Emperor-Has-No-Clothes/ 
 and copied from there by Joerg Kulbartz joerg@kulbartz.de 
-Now this is going to become a exploration of 
+
+## Restart
+Save conversation to file, such that one can restart a new version of ntCoder
+
+Restart conversation from a clean cached version. Just systemprompt. 
+## Tests
+System needs ability to conduct test before git.
+(Or perhaps tests and test of test coverage as git action.) 
 
 ## Environment
 Should automatically backup and have restricted priviledges
@@ -26,6 +33,12 @@ Logs interactions, and all messages send and received.
 ### Backend 
 Tools, in particular a good mcp abstraction
 LLMs abstracted for different providers
+- ✅ **DONE**: Minimal LLM provider abstraction implemented (`LLM` base class + `AnthropicLLM` subclass)
+- `LLM.call(system, messages)` is the provider interface
+- `AnthropicLLM` wraps the Anthropic SDK; exception handling remains in `execute_llm_call()`
+- Active provider instantiated as module-level `llm` object
+
+
 
 #### Tools
 - git Integration, commit, commit messages, 
@@ -37,6 +50,12 @@ needs ability to read bugs and issues from bug tracker
 - researcher 
 read the internet
 
+
+## Better logging for timeout
+In case of timeout no cause is in the logs
+
+## Token limits
+Monitor token limits and implement throtteling.
 
 # Usage
 
@@ -268,6 +287,7 @@ The code implements robust security measures including path validation, director
 - **Git Integration**: ✅ **COMPLETE** - All 5 git workflow tools fully implemented and tested
 - **Path Validation**: ✅ **COMPLETE** - Multi-layer security with symlink protection
 - **Error Handling**: ✅ **IMPLEMENTED** - Comprehensive exception handling for file operations
+- **LLM Provider Abstraction**: ✅ **DONE** - `LLM` ABC + `AnthropicLLM` subclass; `execute_llm_call()` delegates to `llm.call()`
 
 ### 🔧 Current Implementation Issues
 1. **JSON Parsing**: Tool invocation parsing can crash on malformed JSON

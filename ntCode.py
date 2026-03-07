@@ -15,6 +15,7 @@ import time
 from datetime import datetime
 
 import anthropic
+from abc import ABC, abstractmethod
 from dotenv import load_dotenv
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -36,8 +37,75 @@ API_TIMEOUT = float(os.environ.get("NTCODE_API_TIMEOUT", "60"))  # API call time
 # Security Configuration
 ALLOWED_BASE_PATHS = [Path.cwd()]  # Only allow current directory and subdirectories
 
-# Initialize Claude client
-claude_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+# ---------------------------------------------------------------------------
+# LLM provider abstraction
+# ---------------------------------------------------------------------------
+
+class LLM(ABC):
+    """Abstract base class for LLM providers."""
+
+    @abstractmethod
+    def call(self, system: str, messages: List[Dict[str, str]]) -> str:
+        """
+        Send a conversation to the LLM and return the response text.
+        :param system: System prompt string.
+        :param messages: List of {"role": ..., "content": ...} dicts (no system messages).
+        :return: Response text from the model.
+        """
+
+
+class AnthropicLLM(LLM):
+    """LLM implementation backed by the Anthropic Claude API."""
+
+    def __init__(self, api_key: str, model: str = DEFAULT_MODEL,
+                 max_tokens: int = API_MAX_TOKENS, timeout: float = API_TIMEOUT):
+        self.client = anthropic.Anthropic(api_key=api_key)
+        self.model = model
+        self.max_tokens = max_tokens
+        self.timeout = timeout
+
+    def call(self, system: str, messages: List[Dict[str, str]]) -> str:
+        """
+        Call the Anthropic Claude API and return the response text.
+        Raises provider-specific exceptions; callers should handle them.
+        """
+        if LOG_CONVERSATIONS:
+            logger.info(f"Sending {len(messages)} messages to LLM (model={self.model})")
+            if DEBUG_MODE:
+                logger.debug(f"Messages: {json.dumps(messages, indent=2)}")
+
+        start_time = time.time()
+
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            system=system,
+            messages=messages,
+            timeout=self.timeout,
+        )
+
+        elapsed = time.time() - start_time
+        response_text = response.content[0].text
+        input_tokens = response.usage.input_tokens if response.usage else 0
+        output_tokens = response.usage.output_tokens if response.usage else 0
+
+        if LOG_CONVERSATIONS:
+            logger.info(
+                f"Received response ({len(response_text)} chars) in {elapsed:.2f}s "
+                f"| tokens: {input_tokens} in / {output_tokens} out "
+                f"(total: {input_tokens + output_tokens})"
+            )
+            if DEBUG_MODE:
+                logger.debug(f"Response: {response_text}")
+
+        return response_text
+
+
+# Active LLM instance used throughout the application
+llm: LLM = AnthropicLLM(
+    api_key=os.environ["ANTHROPIC_API_KEY"],
+    model=os.environ.get("NTCODE_MODEL", DEFAULT_MODEL),
+)
 
 # Debug Configuration
 DEBUG_MODE = os.environ.get("NTCODE_DEBUG", "false").lower() in ["true", "1", "yes"]
@@ -841,7 +909,8 @@ def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
     return invocations
 
 
-def execute_llm_call(conversation: List[Dict[str, str]]):
+def execute_llm_call(conversation: List[Dict[str, str]]) -> str:
+    """Prepare the conversation and delegate to the active LLM provider."""
     system_content = ""
     messages = []
     for msg in conversation:
@@ -851,65 +920,31 @@ def execute_llm_call(conversation: List[Dict[str, str]]):
             messages.append(msg)
 
     # Conversation pruning is handled in run_coding_agent_loop() before this call.
-    # No pruning here to avoid modifying a local copy without effect on the caller.
-
-    if LOG_CONVERSATIONS:
-        logger.info(f"Sending {len(messages)} messages to LLM")
-        if DEBUG_MODE:
-            logger.debug(f"Messages: {json.dumps(messages, indent=2)}")
 
     try:
-        start_time = time.time()
-
-        # Get model from environment or use default
-        model = os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
-
-        response = claude_client.messages.create(
-            model=model,
-            max_tokens=API_MAX_TOKENS,
-            system=system_content,
-            messages=messages,
-            timeout=API_TIMEOUT,
-        )
-
-        end_time = time.time()
-        response_time = end_time - start_time
-
-        response_text = response.content[0].text
-
-        # Extract token usage from the response
-        input_tokens = response.usage.input_tokens if response.usage else 0
-        output_tokens = response.usage.output_tokens if response.usage else 0
-
-        if LOG_CONVERSATIONS:
-            logger.info(
-                f"Received response ({len(response_text)} chars) in {response_time:.2f}s "
-                f"| tokens: {input_tokens} in / {output_tokens} out "
-                f"(total: {input_tokens + output_tokens})"
-            )
-            if DEBUG_MODE:
-                logger.debug(f"Response: {response_text}")
-
-        return response_text
-
+        return llm.call(system_content, messages)
     except anthropic.APITimeoutError as e:
         logger.error(f"API timeout error: {str(e)}")
-        return f"⏱️ Request timed out. The conversation may be too long or the request too complex. Try:\n- Breaking your request into smaller parts\n- Starting a fresh conversation\n- Reducing the amount of context"
+        return (
+            "⏱️ Request timed out. The conversation may be too long or the request too "
+            "complex. Try:\n- Breaking your request into smaller parts\n"
+            "- Starting a fresh conversation\n- Reducing the amount of context"
+        )
     except anthropic.RateLimitError as e:
         logger.error(f"Rate limit error: {str(e)}")
-        return f"🚫 Rate limit exceeded. Please wait a moment before trying again."
+        return "🚫 Rate limit exceeded. Please wait a moment before trying again."
     except anthropic.APIConnectionError as e:
         logger.error(f"API connection error: {str(e)}")
-        return f"🌐 Failed to connect to Claude API. Please check your internet connection and try again."
+        return "🌐 Failed to connect to Claude API. Please check your internet connection and try again."
     except anthropic.AuthenticationError as e:
         logger.error(f"Authentication error: {str(e)}")
-        return f"🔑 Authentication failed. Please check your ANTHROPIC_API_KEY in your .env file."
+        return "🔑 Authentication failed. Please check your ANTHROPIC_API_KEY in your .env file."
     except anthropic.APIError as e:
         logger.error(f"API error: {str(e)}")
         return f"❌ Claude API error: {str(e)}"
     except Exception as e:
         logger.error(f"LLM call failed: {str(e)}")
-        return f"💥 Unexpected error calling Claude: {str(e)}"
+        return f"💥 Unexpected error calling LLM: {str(e)}"
 
 
 def execute_tool_safely(

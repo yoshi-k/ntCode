@@ -4,29 +4,25 @@
 # https://www.mihaileric.com/The-Emperor-Has-No-Clothes/
 # by Joerg Kulbartz joerg@kulbartz.de
 
-import inspect
-import json
-import logging
-import os
-import subprocess
-import shlex
-import sys
-import threading
-import time
-from collections import deque
-from datetime import datetime
+# ---------------------------------------------------------------------------
+# Entry point shim - all logic has been moved to the modular package layout:
+#
+#   utils/      - config, rate_limiter, security, llm
+#   tools/      - one file per tool + registry
+#   frontend/   - connector, agent_loop
+#
+# This file is kept for backward compatibility: `python ntCode.py` still works.
+# ---------------------------------------------------------------------------
 
-import anthropic
-from abc import ABC, abstractmethod
 from dotenv import load_dotenv
-from pathlib import Path
-from typing import Any, Dict, List, Tuple
-
-YOU_COLOR = "\u001b[94m"
-ASSISTANT_COLOR = "\u001b[93m"
-RESET_COLOR = "\u001b[0m"
 
 load_dotenv()
+
+from frontend.agent_loop import run_coding_agent_loop  # noqa: E402
+
+
+if __name__ == "__main__":
+    run_coding_agent_loop()
 
 # Configuration Constants
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit

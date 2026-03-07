@@ -57,7 +57,12 @@ read the internet
 In case of timeout no cause is in the logs
 
 ## Token limits
-Monitor token limits and implement throtteling.
+✅ **DONE**: Sliding-window token rate limiter implemented (30 000 tokens / 60 s).
+- `TokenRateLimiter` class with a rolling 60-second `deque` of `(timestamp, tokens)` pairs
+- `wait_for_capacity(n)` blocks before every API call until capacity is available, then reserves the tokens atomically
+- `record_actual(actual, estimated)` corrects the reservation with real usage from `response.usage`
+- Thread-safe via `threading.Lock`; limit tunable via `NTCODE_TOKEN_LIMIT_PER_MINUTE` env var
+- Integrated as the single choke-point inside `AnthropicLLM.call()`; status printed in every log line
 
 # Usage
 
@@ -116,6 +121,7 @@ NTCODE_LOG_CONVERSATIONS=false python ntCode.py
 | `NTCODE_VERBOSE` | true/false | false | Enable interactive tool approval |
 | `NTCODE_LOG_CONVERSATIONS` | true/false | true | Enable conversation logging to file |
 | `ANTHROPIC_API_KEY` | string | required | Your Anthropic API key |
+| `NTCODE_TOKEN_LIMIT_PER_MINUTE` | integer | 30000 | Max tokens consumed per 60-second sliding window |
 
 ## Log Files
 
@@ -257,7 +263,7 @@ The code implements robust security measures including path validation, director
 
 ### 6. Security & Safety
 - [ ] **Add file extension validation** - Validate file types for safety
-- [ ] **Implement rate limiting** - Add API call rate limiting
+- [x] **Implement rate limiting** - ✅ Sliding-window token rate limiter (30k TPM) implemented in `TokenRateLimiter`
 - [ ] **Add operation confirmation** - Require confirmation for destructive operations
 - [ ] **Audit security validation** - Review and test all security measures
 
@@ -290,6 +296,7 @@ The code implements robust security measures including path validation, director
 - **Path Validation**: ✅ **COMPLETE** - Multi-layer security with symlink protection
 - **Error Handling**: ✅ **IMPLEMENTED** - Comprehensive exception handling for file operations
 - **LLM Provider Abstraction**: ✅ **DONE** - `LLM` ABC + `AnthropicLLM` subclass; `execute_llm_call()` delegates to `llm.call()`; provider swappable via module-level `llm` variable
+- **Token Rate Limiting**: ✅ **DONE** - `TokenRateLimiter` enforces 30 000 tokens/min sliding window; integrated into `AnthropicLLM.call()`; configurable via `NTCODE_TOKEN_LIMIT_PER_MINUTE`
 
 ### 🔧 Current Implementation Issues
 1. **JSON Parsing**: Tool invocation parsing can crash on malformed JSON

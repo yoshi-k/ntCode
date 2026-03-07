@@ -32,7 +32,7 @@ MAX_CONVERSATION_LENGTH = 50  # Maximum number of messages to keep
 DEFAULT_MODEL = "claude-sonnet-4-6"  # Default Claude model
 GIT_TIMEOUT = 30  # Git command timeout in seconds
 API_MAX_TOKENS = 8192  # Maximum tokens for API requests
-API_TIMEOUT = float(os.environ.get("NTCODE_API_TIMEOUT", "60"))  # API call timeout in seconds
+API_TIMEOUT = float(os.environ.get("NTCODE_API_TIMEOUT", "600"))  # API call timeout in seconds (default 10 min)
 
 # Security Configuration
 ALLOWED_BASE_PATHS = [Path.cwd()]  # Only allow current directory and subdirectories
@@ -59,7 +59,7 @@ class AnthropicLLM(LLM):
 
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL,
                  max_tokens: int = API_MAX_TOKENS, timeout: float = API_TIMEOUT):
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self.client = anthropic.Anthropic(api_key=api_key, timeout=timeout)
         self.model = model
         self.max_tokens = max_tokens
         self.timeout = timeout

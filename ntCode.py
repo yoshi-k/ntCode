@@ -64,15 +64,18 @@ class TokenRateLimiter:
     1. Before calling the API, call :meth:`wait_for_capacity` with a
        conservative *estimated* token count.  This call will block until
        the window has enough headroom, then atomically reserve the tokens.
-    2. After the API responds and the real usage is known, call
-       :meth:`record_actual` with the true token count so the reservation
-       is corrected.
+       It returns an opaque *reservation_id*.
+    2. After the API responds and the real usage is known, pass the
+       *reservation_id* and actual token count to :meth:`record_actual`
+       so the reservation is corrected to the true value.
     """
 
     def __init__(self, limit: int = TOKEN_LIMIT_PER_MINUTE) -> None:
         self.limit = limit
         self._lock = threading.Lock()
-        # Deque of (monotonic_timestamp: float, tokens: int) tuples.
+        # Deque of mutable entries: [monotonic_timestamp, tokens, reservation_id]
+        # Lists (not tuples) are used so record_actual() can update entry[1]
+        # in-place by object identity without rebuilding the deque.
         self._usage: deque = deque()
 
     # ------------------------------------------------------------------
@@ -85,26 +88,28 @@ class TokenRateLimiter:
         while self._usage and self._usage[0][0] <= cutoff:
             self._usage.popleft()
 
-    def _tokens_used(self, now: float) -> int:
-        """Sum of tokens recorded in the current window (caller holds lock)."""
-        self._evict_expired(now)
-        return sum(tok for _, tok in self._usage)
-
     def _seconds_until_free(self, needed: int, now: float) -> float:
-        """How many seconds until *needed* tokens become available.
+        """Seconds to wait before *needed* tokens fit in the window.
 
-        Walks the usage deque from oldest to newest, accumulating how much
-        capacity will be freed as each entry ages out of the window, and
-        returns the time at which enough capacity exists.
-        Caller must hold *self._lock*.
+        Walks the usage deque from oldest to newest, computing how much
+        capacity each expiring entry will free, and returns the time at
+        which enough headroom first becomes available.
+
+        Caller must hold *self._lock* and must have already called
+        ``_evict_expired(now)`` so the deque contains only live entries.
+        ``current_usage`` is computed once before the loop to avoid calling
+        ``_evict_expired`` again mid-iteration (which would mutate the deque
+        while it is being iterated).
         """
+        current_usage = sum(entry[1] for entry in self._usage)
         freed = 0
-        for ts, tok in self._usage:
-            freed += tok
-            if self._tokens_used(now) - freed + needed <= self.limit:
-                # This entry expiring is enough; wait until it leaves the window.
-                return max(0.0, ts + _RATE_WINDOW_SECONDS - now)
-        # All entries together free up enough space; wait for the oldest.
+        for entry in self._usage:
+            freed += entry[1]
+            if current_usage - freed + needed <= self.limit:
+                # This entry expiring creates enough headroom.
+                return max(0.0, entry[0] + _RATE_WINDOW_SECONDS - now)
+        # Waiting for all entries to expire still leaves us short – fall back
+        # to waiting for the oldest entry (caller will re-evaluate afterwards).
         if self._usage:
             return max(0.0, self._usage[0][0] + _RATE_WINDOW_SECONDS - now)
         return 0.0
@@ -113,12 +118,15 @@ class TokenRateLimiter:
     # Public API
     # ------------------------------------------------------------------
 
-    def wait_for_capacity(self, estimated_tokens: int) -> None:
+    def wait_for_capacity(self, estimated_tokens: int) -> object:
         """Block until *estimated_tokens* fit inside the rate limit window.
 
         Once capacity is confirmed the tokens are *reserved* optimistically
-        so that concurrent callers see them immediately.  Call
-        :meth:`record_actual` afterwards to correct the reservation.
+        so that concurrent callers see them immediately.
+
+        Returns an opaque *reservation ID* that must be passed to
+        :meth:`record_actual` so the correct entry can be updated, even
+        when concurrent requests share the same estimated token count.
 
         If *estimated_tokens* exceeds the hard per-minute limit the request
         can never fit inside a single window.  Rather than hanging forever
@@ -150,18 +158,24 @@ class TokenRateLimiter:
                     f"exceeds rate limit {self.limit:,}."
                 )
             # User chose to proceed – reserve without enforcing the limit.
+            reservation_id = object()
             with self._lock:
-                self._usage.append((time.monotonic(), estimated_tokens))
-            return
+                entry = [time.monotonic(), estimated_tokens, reservation_id]
+                self._usage.append(entry)
+            return reservation_id
         # --------------------------------------------------------------------
 
         while True:
             with self._lock:
                 now = time.monotonic()
-                used = self._tokens_used(now)
+                # Evict explicitly so _seconds_until_free receives a clean
+                # deque and does not need to call _evict_expired itself.
+                self._evict_expired(now)
+                used = sum(entry[1] for entry in self._usage)
                 if used + estimated_tokens <= self.limit:
-                    self._usage.append((now, estimated_tokens))
-                    return  # capacity secured
+                    reservation_id = object()
+                    self._usage.append([now, estimated_tokens, reservation_id])
+                    return reservation_id  # capacity secured
                 wait_sec = self._seconds_until_free(estimated_tokens, now)
 
             # Log outside the lock to avoid blocking other threads.
@@ -171,35 +185,34 @@ class TokenRateLimiter:
                 f"{estimated_tokens} tokens of capacity …",
                 flush=True,
             )
-            if used == 0:
-                return
             time.sleep(max(0.5, wait_sec))
 
-    def record_actual(self, actual_tokens: int, estimated_tokens: int) -> None:
+    def record_actual(self, reservation_id: object, actual_tokens: int) -> None:
         """Correct the optimistic reservation made in :meth:`wait_for_capacity`.
 
-        Searches the usage deque (from newest to oldest) for the first entry
-        whose token count matches *estimated_tokens* and replaces it with
-        *actual_tokens*.  If no matching entry is found a delta correction is
-        appended instead.
+        Finds the reservation by its unique ID (returned by
+        :meth:`wait_for_capacity`) and updates its token count to
+        *actual_tokens*.  Using an ID rather than matching by token count
+        means concurrent requests with the same estimate are each corrected
+        independently without risk of updating the wrong entry.
+
+        If the reservation is no longer in the window (it has already aged
+        out) the correction is a no-op: the tokens have already left the
+        window, so no adjustment is needed.
         """
-        if actual_tokens == estimated_tokens:
-            return
-        delta = actual_tokens - estimated_tokens
         with self._lock:
-            entries = list(self._usage)
-            for i in range(len(entries) - 1, -1, -1):
-                if entries[i][1] == estimated_tokens:
-                    entries[i] = (entries[i][0], actual_tokens)
-                    self._usage = deque(entries)
+            for entry in self._usage:
+                if entry[2] is reservation_id:
+                    entry[1] = actual_tokens
                     return
-            # Reservation not found – append a signed delta correction.
-            self._usage.append((time.monotonic(), delta))
+            # Reservation aged out of the window – no correction needed.
 
     def status(self) -> str:
         """Human-readable one-liner showing current window usage."""
         with self._lock:
-            used = self._tokens_used(time.monotonic())
+            now = time.monotonic()
+            self._evict_expired(now)
+            used = sum(entry[1] for entry in self._usage)
         return (
             f"[RateLimiter] {used}/{self.limit} tokens used "
             f"in the last {_RATE_WINDOW_SECONDS}s"
@@ -307,7 +320,7 @@ class AnthropicLLM(LLM):
         # --- Rate limiting: reserve capacity before hitting the API -------
         estimated = self._estimate_tokens(system, messages, self.max_tokens)
         logger.debug(f"Estimated token cost for this request: {estimated}")
-        _rate_limiter.wait_for_capacity(estimated)
+        reservation_id = _rate_limiter.wait_for_capacity(estimated)
         # ------------------------------------------------------------------
 
         start_time = time.time()
@@ -327,7 +340,7 @@ class AnthropicLLM(LLM):
         actual_tokens = input_tokens + output_tokens
 
         # --- Rate limiting: correct the optimistic reservation ------------
-        _rate_limiter.record_actual(actual_tokens, estimated)
+        _rate_limiter.record_actual(reservation_id, actual_tokens)
         # ------------------------------------------------------------------
 
         if LOG_CONVERSATIONS:
@@ -422,9 +435,10 @@ def run_git_command(cmd_args: List[str], cwd: Path = None) -> Dict[str, Any]:
     try:
         validate_git_operation(cwd)
 
-        # Sanitize command arguments to prevent injection
-        safe_args = [shlex.quote(str(arg)) for arg in cmd_args]
-        full_cmd = ["git"] + cmd_args  # Don't quote the actual command, just args
+        # subprocess.run with a list (not shell=True) does not perform shell
+        # expansion, so no quoting is needed.  shlex is kept imported for any
+        # future shell-string usage elsewhere in the module.
+        full_cmd = ["git"] + cmd_args
 
         result = subprocess.run(
             full_cmd,

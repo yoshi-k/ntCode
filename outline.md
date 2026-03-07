@@ -33,10 +33,12 @@ Logs interactions, and all messages send and received.
 ### Backend 
 Tools, in particular a good mcp abstraction
 LLMs abstracted for different providers
-- ✅ **DONE**: Minimal LLM provider abstraction implemented (`LLM` base class + `AnthropicLLM` subclass)
-- `LLM.call(system, messages)` is the provider interface
-- `AnthropicLLM` wraps the Anthropic SDK; exception handling remains in `execute_llm_call()`
-- Active provider instantiated as module-level `llm` object
+- ✅ **DONE**: Minimal LLM provider abstraction implemented
+  - `LLM` abstract base class (`abc.ABC`) with single method `call(system, messages) -> str`
+  - `AnthropicLLM(LLM)` wraps the Anthropic SDK; logs token counts and elapsed time
+  - Exception handling (timeouts, rate limits, auth errors) remains in `execute_llm_call()`, not in the class
+  - Active provider instantiated as module-level `llm: LLM = AnthropicLLM(...)` from env vars
+  - Swapping providers requires only a one-line reassignment of `llm`
 
 
 
@@ -287,7 +289,7 @@ The code implements robust security measures including path validation, director
 - **Git Integration**: ✅ **COMPLETE** - All 5 git workflow tools fully implemented and tested
 - **Path Validation**: ✅ **COMPLETE** - Multi-layer security with symlink protection
 - **Error Handling**: ✅ **IMPLEMENTED** - Comprehensive exception handling for file operations
-- **LLM Provider Abstraction**: ✅ **DONE** - `LLM` ABC + `AnthropicLLM` subclass; `execute_llm_call()` delegates to `llm.call()`
+- **LLM Provider Abstraction**: ✅ **DONE** - `LLM` ABC + `AnthropicLLM` subclass; `execute_llm_call()` delegates to `llm.call()`; provider swappable via module-level `llm` variable
 
 ### 🔧 Current Implementation Issues
 1. **JSON Parsing**: Tool invocation parsing can crash on malformed JSON

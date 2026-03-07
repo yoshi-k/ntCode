@@ -34,7 +34,9 @@ MAX_CONVERSATION_LENGTH = 50  # Maximum number of messages to keep
 DEFAULT_MODEL = "claude-sonnet-4-6"  # Default Claude model
 GIT_TIMEOUT = 30  # Git command timeout in seconds
 API_MAX_TOKENS = 8192  # Maximum tokens for API requests
-API_TIMEOUT = float(os.environ.get("NTCODE_API_TIMEOUT", "600"))  # API call timeout in seconds (default 10 min)
+API_TIMEOUT = float(
+    os.environ.get("NTCODE_API_TIMEOUT", "600")
+)  # API call timeout in seconds (default 10 min)
 
 # Security Configuration
 ALLOWED_BASE_PATHS = [Path.cwd()]  # Only allow current directory and subdirectories
@@ -117,7 +119,42 @@ class TokenRateLimiter:
         Once capacity is confirmed the tokens are *reserved* optimistically
         so that concurrent callers see them immediately.  Call
         :meth:`record_actual` afterwards to correct the reservation.
+
+        If *estimated_tokens* exceeds the hard per-minute limit the request
+        can never fit inside a single window.  Rather than hanging forever
+        the limiter asks the user interactively whether to proceed anyway
+        (bypassing the limit for this one call) or abort.
         """
+        # --- Guard: estimate exceeds the hard limit – would hang forever ---
+        if estimated_tokens > self.limit:
+            print(
+                f"\n[RateLimiter] ⚠️  Estimated token cost ({estimated_tokens:,}) "
+                f"exceeds the per-minute limit ({self.limit:,}).\n"
+                f"This request cannot fit inside the rate-limit window and would "
+                f"block indefinitely.",
+                flush=True,
+            )
+            try:
+                answer = (
+                    input(
+                        "Proceed anyway and bypass the rate limit for this request? [y/N]: "
+                    )
+                    .strip()
+                    .lower()
+                )
+            except (EOFError, KeyboardInterrupt):
+                answer = "n"
+            if answer not in ("y", "yes"):
+                raise RuntimeError(
+                    f"Request aborted: estimated token cost {estimated_tokens:,} "
+                    f"exceeds rate limit {self.limit:,}."
+                )
+            # User chose to proceed – reserve without enforcing the limit.
+            with self._lock:
+                self._usage.append((time.monotonic(), estimated_tokens))
+            return
+        # --------------------------------------------------------------------
+
         while True:
             with self._lock:
                 now = time.monotonic()
@@ -134,6 +171,8 @@ class TokenRateLimiter:
                 f"{estimated_tokens} tokens of capacity …",
                 flush=True,
             )
+            if used == 0:
+                return
             time.sleep(max(0.5, wait_sec))
 
     def record_actual(self, actual_tokens: int, estimated_tokens: int) -> None:
@@ -171,8 +210,38 @@ class TokenRateLimiter:
 _rate_limiter = TokenRateLimiter()
 
 # ---------------------------------------------------------------------------
+# Debug / logging configuration  (must come before llm instantiation so that
+# AnthropicLLM.call() can safely reference these globals and `logger`)
+# ---------------------------------------------------------------------------
+
+DEBUG_MODE = os.environ.get("NTCODE_DEBUG", "false").lower() in ["true", "1", "yes"]
+VERBOSE_MODE = os.environ.get("NTCODE_VERBOSE", "false").lower() in ["true", "1", "yes"]
+LOG_CONVERSATIONS = os.environ.get("NTCODE_LOG_CONVERSATIONS", "true").lower() in [
+    "true",
+    "1",
+    "yes",
+]
+
+# Configure logging
+log_handlers = []
+if DEBUG_MODE:
+    log_handlers.append(logging.StreamHandler(sys.stdout))
+if LOG_CONVERSATIONS:
+    log_handlers.append(logging.FileHandler("ntcode.log", mode="a"))
+if not log_handlers:  # If no logging enabled, use null handler
+    log_handlers.append(logging.NullHandler())
+
+logging.basicConfig(
+    level=logging.DEBUG if DEBUG_MODE else logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=log_handlers,
+)
+logger = logging.getLogger("ntCode")
+
+# ---------------------------------------------------------------------------
 # LLM provider abstraction
 # ---------------------------------------------------------------------------
+
 
 class LLM(ABC):
     """Abstract base class for LLM providers."""
@@ -190,15 +259,22 @@ class LLM(ABC):
 class AnthropicLLM(LLM):
     """LLM implementation backed by the Anthropic Claude API."""
 
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL,
-                 max_tokens: int = API_MAX_TOKENS, timeout: float = API_TIMEOUT):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_MODEL,
+        max_tokens: int = API_MAX_TOKENS,
+        timeout: float = API_TIMEOUT,
+    ):
         self.client = anthropic.Anthropic(api_key=api_key, timeout=timeout)
         self.model = model
         self.max_tokens = max_tokens
         self.timeout = timeout
 
     @staticmethod
-    def _estimate_tokens(system: str, messages: List[Dict[str, str]], max_tokens: int) -> int:
+    def _estimate_tokens(
+        system: str, messages: List[Dict[str, str]], max_tokens: int
+    ) -> int:
         """Cheap pre-request token estimate (heuristic: 1 token ≈ 4 chars).
 
         We add *max_tokens* as a pessimistic upper bound for the reply so
@@ -208,7 +284,9 @@ class AnthropicLLM(LLM):
         total_chars = len(system)
         for msg in messages:
             content = msg.get("content", "")
-            total_chars += len(content) if isinstance(content, str) else len(json.dumps(content))
+            total_chars += (
+                len(content) if isinstance(content, str) else len(json.dumps(content))
+            )
         return (total_chars // 4) + max_tokens
 
     def call(self, system: str, messages: List[Dict[str, str]]) -> str:
@@ -269,31 +347,6 @@ llm: LLM = AnthropicLLM(
     api_key=os.environ["ANTHROPIC_API_KEY"],
     model=os.environ.get("NTCODE_MODEL", DEFAULT_MODEL),
 )
-
-# Debug Configuration
-DEBUG_MODE = os.environ.get("NTCODE_DEBUG", "false").lower() in ["true", "1", "yes"]
-VERBOSE_MODE = os.environ.get("NTCODE_VERBOSE", "false").lower() in ["true", "1", "yes"]
-LOG_CONVERSATIONS = os.environ.get("NTCODE_LOG_CONVERSATIONS", "true").lower() in [
-    "true",
-    "1",
-    "yes",
-]
-
-# Configure logging
-log_handlers = []
-if DEBUG_MODE:
-    log_handlers.append(logging.StreamHandler(sys.stdout))
-if LOG_CONVERSATIONS:
-    log_handlers.append(logging.FileHandler("ntcode.log", mode="a"))
-if not log_handlers:  # If no logging enabled, use null handler
-    log_handlers.append(logging.NullHandler())
-
-logging.basicConfig(
-    level=logging.DEBUG if DEBUG_MODE else logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=log_handlers,
-)
-logger = logging.getLogger("ntCode")
 
 
 def validate_file_access(path: Path) -> None:

@@ -36,7 +36,7 @@ Available commands:
   /help                  Show this help message
   /quit  or  /exit       Exit ntCode
   /reset                 Clear conversation history (keep system prompt)
-  /save  [file]          Save conversation to file (default: ntcode_conversation.json)
+  /save  [file]          Save conversation to file (default: saves/conversation-<timestamp>.json)
   /load  [file]          Load conversation from file
   /prompt                Show the current system prompt
   /tools                 List available tools

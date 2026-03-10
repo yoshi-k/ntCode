@@ -1,0 +1,16 @@
+# Dummy LLM replay file for ntCode tests.
+# Lines beginning with '#' or that are blank are ignored.
+# Each remaining line is returned as one complete LLM response, in order.
+# DummyLLM cycles back to the top once all lines are exhausted.
+
+I've read the file. It looks good — no issues found.
+tool: read_file({"filename": "outline.md"})
+The code change looks correct. I'll apply it now.
+tool: edit_file({"path": "utils/config.py", "old_str": "DEBUG = False", "new_str": "DEBUG = True"})
+All tests pass. The implementation is complete.
+tool: list_files({"path": "."})
+I cannot find that file in the repository. Please double-check the path.
+The function is missing a return statement on the error branch.
+tool: git_status({})
+Here is a summary of the changes I made and why.
+tool: git_commit({"message": "Fix edge case in rate limiter"})

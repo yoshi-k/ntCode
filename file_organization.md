@@ -33,6 +33,8 @@ Contains no tool logic, no UI, and no LLM call-site code beyond the provider abs
 | `security.py` | Path-safety and git-safety helpers used by every tool. `resolve_abs_path()` turns relative paths into absolute ones; `validate_file_access()` enforces sandbox restrictions and blocks path-traversal attempts; `validate_git_operation()` confirms a git repository is present; `run_git_command()` wraps `subprocess.run` with timeout handling and security checks. |
 | `rate_limiter.py` | `TokenRateLimiter` class implementing a sliding-window (60-second) token-consumption budget. `wait_for_capacity(estimated)` blocks until headroom is available and returns a reservation ID; `record_actual(id, actual)` corrects the reservation once the real API token counts are known. A module-level `_rate_limiter` singleton is shared by `AnthropicLLM`. |
 | `llm.py` | LLM provider abstraction. `LLM` is an abstract base class with a single `call()` method. `AnthropicLLM` implements it: estimates tokens, calls `_rate_limiter.wait_for_capacity()`, makes the Anthropic API request with timeout support, then corrects the reservation. `execute_llm_call()` is the application-level wrapper that separates the system message, delegates to the active `llm` singleton, and catches and humanises all provider exceptions (timeout, rate-limit, auth, connection errors). |
+| `dummy_llm.py` | `DummyLLM` — a file-replay subclass of `LLM` for tests and offline development. Reads a plain-text replay file (one response per non-blank, non-comment line) and returns each line in turn via `call(system, messages)`, cycling back to the start when exhausted. No API calls, no rate limiting, no credentials needed. Extras: `reset()` restarts the replay; `reload(path)` re-reads from disk; `response_count` and `current_index` properties for assertion in tests. |
+| `dummy_llm.py` | `DummyLLM` — a file-replay subclass of `LLM` for tests and offline development. Reads a plain-text replay file (one response per non-blank, non-comment line) and returns each line in turn, cycling back to the start when exhausted. Returns a `_FakeUsage` object that mirrors the shape of Anthropic's usage type so `execute_llm_call()` and any logging code work without modification. Extras: `reset()`, `reload()`, `response_count`, `current_index`. |
 
 ---
 
@@ -83,6 +85,7 @@ never imports LLM or tool internals directly.
 
 | File | Description |
 |------|-------------|
+| `dummy_responses.txt` | Plain-text replay file consumed by `DummyLLM` in tests. Contains a mix of plain-prose replies and tool-invocation lines so tests cover both response shapes. Comments (lines starting with `#`) and blank lines are ignored by the loader. |
 | `__init__.py` | Empty package marker. |
 | `test_security.py` | Tests for `validate_file_access()` and `resolve_abs_path()` in `utils/security.py`: verifies that paths inside `cwd` are allowed, that paths outside it raise `PermissionError`, and that `..` traversal attempts are blocked. Also contains integration tests for `read_file_tool` and `edit_file_tool` checking that security boundaries are enforced end-to-end. |
 | `test_basic.py` | Smoke tests imported directly from `ntCode.py` (stubs out `anthropic` and `dotenv`): path handling, `read_file_tool`, `list_files_tool`, and `extract_tool_invocations` happy-path and edge cases. |

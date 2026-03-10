@@ -23,6 +23,14 @@ from typing import Dict, List, Optional
 # A Message is a plain, JSON-serialisable dict.
 Message = Dict[str, str]  # {"role": str, "content": str}
 
+# An ApprovalRequest is sent by the agent to the TUI when VERBOSE_MODE is on.
+# {"tool_name": str, "args": dict}
+ApprovalRequest = Dict[str, object]
+
+# An ApprovalResponse is sent by the TUI back to the agent.
+# {"approved": bool}
+ApprovalResponse = Dict[str, bool]
+
 
 class Connector:
     """Thread-safe two-directional message channel.
@@ -39,11 +47,15 @@ class Connector:
     def __init__(self) -> None:
         self._lock = threading.Lock()
 
-        self._user_queue: deque = deque()   # frontend -> agent
-        self._agent_queue: deque = deque()  # agent    -> frontend
+        self._user_queue: deque = deque()     # frontend -> agent  (user messages)
+        self._agent_queue: deque = deque()    # agent    -> frontend (assistant messages)
+        self._approval_req_queue: deque = deque()  # agent -> frontend (tool approval requests)
+        self._approval_resp_queue: deque = deque() # frontend -> agent (tool approval responses)
 
         self._user_event = threading.Event()
         self._agent_event = threading.Event()
+        self._approval_req_event = threading.Event()
+        self._approval_resp_event = threading.Event()
 
         self._history: List[Message] = []
 
@@ -162,6 +174,73 @@ class Connector:
             return list(self._history)
 
     # ------------------------------------------------------------------
+    # Tool approval channel (used only when VERBOSE_MODE is on)
+    # ------------------------------------------------------------------
+
+    def request_approval(self, tool_name: str, args: dict) -> None:
+        """Agent -> frontend: ask the user to approve a tool execution."""
+        req: ApprovalRequest = {"tool_name": tool_name, "args": args}
+        with self._lock:
+            self._approval_req_queue.append(req)
+            self._approval_req_event.set()
+
+    def receive_approval_request_blocking(
+        self, timeout: Optional[float] = None
+    ) -> Optional[ApprovalRequest]:
+        """Frontend: block until an approval request arrives, then return it."""
+        while not self._shutdown:
+            self._approval_req_event.wait(timeout=timeout)
+            with self._lock:
+                if self._approval_req_queue:
+                    req = self._approval_req_queue.popleft()
+                    if not self._approval_req_queue:
+                        self._approval_req_event.clear()
+                    return req
+            if timeout is not None:
+                return None
+        return None
+
+    def send_approval_response(self, approved: bool) -> None:
+        """Frontend -> agent: convey the user's yes/no decision."""
+        resp: ApprovalResponse = {"approved": approved}
+        with self._lock:
+            self._approval_resp_queue.append(resp)
+            self._approval_resp_event.set()
+
+    def receive_approval_response_blocking(
+        self, timeout: Optional[float] = None
+    ) -> Optional[ApprovalResponse]:
+        """Agent: block until the frontend sends the approval decision."""
+        while not self._shutdown:
+            self._approval_resp_event.wait(timeout=timeout)
+            with self._lock:
+                if self._approval_resp_queue:
+                    resp = self._approval_resp_queue.popleft()
+                    if not self._approval_resp_queue:
+                        self._approval_resp_event.clear()
+                    return resp
+            if timeout is not None:
+                return None
+        return None
+
+    # ------------------------------------------------------------------
+    # Control messages (save / load / reset conversation)
+    # ------------------------------------------------------------------
+
+    def send_control(self, command: str, payload: object = None) -> None:
+        """Frontend -> agent: send a control command.
+
+        Supported commands: ``"save"``, ``"load"``, ``"reset"``.
+        *payload* carries command-specific data (e.g. a file path for save/load).
+        The command is delivered via the user queue with role ``"control"``.
+        """
+        msg: Message = {"role": "control", "command": command, "payload": payload or ""}
+        with self._lock:
+            self._history.append(msg)
+            self._user_queue.append(msg)
+            self._user_event.set()
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
@@ -170,3 +249,5 @@ class Connector:
         self._shutdown = True
         self._user_event.set()
         self._agent_event.set()
+        self._approval_req_event.set()
+        self._approval_resp_event.set()

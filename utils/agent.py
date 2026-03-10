@@ -18,7 +18,8 @@ The TUI (or any other frontend) owns the ``Connector`` and starts
 """
 
 import json
-from typing import Any, Dict, List, Tuple
+import os
+from typing import Any, Dict, List, Optional, Tuple
 
 from utils.config import (
     DEBUG_MODE,
@@ -29,6 +30,9 @@ from utils.config import (
 from utils.llm import execute_llm_call
 from utils.connector import Connector
 from tools.registry import TOOL_REGISTRY, get_full_system_prompt, execute_tool_safely
+
+# Default file used when the user does not supply a path for save/load.
+_DEFAULT_CONVERSATION_FILE = "ntcode_conversation.json"
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +153,100 @@ def _is_error_response(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Conversation persistence helpers
+# ---------------------------------------------------------------------------
+
+def _save_conversation(conversation: List[Dict[str, Any]], path: str) -> str:
+    """Serialise *conversation* to a JSON file at *path*.
+
+    Returns a human-readable status string.
+    """
+    try:
+        abs_path = os.path.abspath(path)
+        with open(abs_path, "w", encoding="utf-8") as fh:
+            json.dump(conversation, fh, ensure_ascii=False, indent=2)
+        logger.info("Conversation saved to %s (%d messages)", abs_path, len(conversation))
+        return f"Conversation saved to {abs_path} ({len(conversation)} messages)."
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to save conversation: %s", exc)
+        return f"\u274c Failed to save conversation: {exc}"
+
+
+def _load_conversation(
+    path: str, system_prompt: str
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Load a previously saved conversation from *path*.
+
+    Always re-inserts the current system prompt as the first message so the
+    agent uses up-to-date tool descriptions even when loading an old file.
+
+    Returns ``(conversation, status_string)``.
+    """
+    try:
+        abs_path = os.path.abspath(path)
+        with open(abs_path, "r", encoding="utf-8") as fh:
+            loaded: List[Dict[str, Any]] = json.load(fh)
+        # Strip any old system messages and prepend the current one
+        non_system = [m for m in loaded if m.get("role") != "system"]
+        conversation = [{"role": "system", "content": system_prompt}] + non_system
+        logger.info(
+            "Conversation loaded from %s (%d messages)", abs_path, len(conversation)
+        )
+        return conversation, f"Conversation loaded from {abs_path} ({len(non_system)} messages restored)."
+    except FileNotFoundError:
+        msg = f"\u274c File not found: {path}"
+        logger.warning(msg)
+        return None, msg
+    except Exception as exc:  # noqa: BLE001
+        msg = f"\u274c Failed to load conversation: {exc}"
+        logger.error(msg)
+        return None, msg
+
+
+# ---------------------------------------------------------------------------
+# Control-message handler
+# ---------------------------------------------------------------------------
+
+def _handle_control(
+    msg: Dict[str, Any],
+    conversation: List[Dict[str, Any]],
+    connector: "Connector",
+) -> List[Dict[str, Any]]:
+    """Execute a control command and publish a status reply.
+
+    Returns the (possibly replaced) conversation list.
+    """
+    command = msg.get("command", "")
+    payload = msg.get("payload", "") or ""
+    system_prompt = get_full_system_prompt()
+
+    if command == "reset":
+        conversation.clear()
+        conversation.append({"role": "system", "content": system_prompt})
+        connector.send_assistant("Conversation reset. Starting fresh!")
+        logger.info("Conversation reset by user.")
+
+    elif command == "save":
+        path = payload or _DEFAULT_CONVERSATION_FILE
+        status = _save_conversation(conversation, path)
+        connector.send_assistant(status)
+
+    elif command == "load":
+        path = payload or _DEFAULT_CONVERSATION_FILE
+        new_conv, status = _load_conversation(path, system_prompt)
+        if new_conv is not None:
+            conversation.clear()
+            conversation.extend(new_conv)
+        connector.send_assistant(status)
+
+    else:
+        connector.send_assistant(f"\u274c Unknown control command: {command!r}")
+        logger.warning("Unknown control command: %s", command)
+
+    return conversation
+
+
+# ---------------------------------------------------------------------------
 # Agent loop
 # ---------------------------------------------------------------------------
 
@@ -171,12 +269,17 @@ def run_agent(connector: Connector) -> None:
 
     while True:
         # ----------------------------------------------------------------
-        # Wait for the next user turn
+        # Wait for the next user turn or control command
         # ----------------------------------------------------------------
         user_msg = connector.receive_user_blocking()
         if user_msg is None:
             logger.info("AgentLoop: connector shut down, exiting.")
             break
+
+        # Handle control commands (save / load / reset) before touching the LLM
+        if user_msg.get("role") == "control":
+            _handle_control(user_msg, conversation, connector)
+            continue
 
         conversation.append({"role": "user", "content": user_msg["content"]})
 
@@ -200,13 +303,6 @@ def run_agent(connector: Connector) -> None:
                     logger.debug("Assistant response:\n%s", assistant_response)
                     logger.debug("Tool invocations: %s", tool_invocations)
 
-                if VERBOSE_MODE and tool_invocations:
-                    logger.info(
-                        "VERBOSE_MODE: %d tool invocation(s): %s",
-                        len(tool_invocations),
-                        [n for n, _ in tool_invocations],
-                    )
-
                 if not tool_invocations:
                     # Plain LLM reply - publish and wait for next user turn
                     connector.send_assistant(assistant_response)
@@ -226,6 +322,25 @@ def run_agent(connector: Connector) -> None:
                     if name not in TOOL_REGISTRY:
                         logger.error("Unknown tool after registry check: %s", name)
                         continue
+
+                    # Verbose-mode approval: ask the TUI before executing
+                    if VERBOSE_MODE:
+                        connector.request_approval(name, args)
+                        approval = connector.receive_approval_response_blocking(timeout=60)
+                        if approval is None or not approval.get("approved", False):
+                            logger.info("Tool %s rejected by user (verbose mode)", name)
+                            denied_result = {
+                                "error": "Tool execution rejected by user.",
+                                "tool_name": name,
+                                "success": False,
+                            }
+                            conversation.append(
+                                {
+                                    "role": "user",
+                                    "content": f"tool_result({json.dumps(denied_result)})",
+                                }
+                            )
+                            continue
 
                     tool_fn = TOOL_REGISTRY[name]
                     try:

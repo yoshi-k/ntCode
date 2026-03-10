@@ -31,8 +31,18 @@ from utils.llm import execute_llm_call
 from utils.connector import Connector
 from tools.registry import TOOL_REGISTRY, get_full_system_prompt, execute_tool_safely
 
-# Default file used when the user does not supply a path for save/load.
-_DEFAULT_CONVERSATION_FILE = "ntcode_conversation.json"
+# Default directory used when the user does not supply a path for save/load.
+_DEFAULT_SAVE_DIR = "saves"
+
+
+def _default_save_path() -> str:
+    """Return a timestamped path inside the saves/ folder."""
+    import datetime
+    import pathlib
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    p = pathlib.Path(_DEFAULT_SAVE_DIR) / f"conversation-{timestamp}.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return str(p)
 
 
 # ---------------------------------------------------------------------------
@@ -227,12 +237,21 @@ def _handle_control(
         logger.info("Conversation reset by user.")
 
     elif command == "save":
-        path = payload or _DEFAULT_CONVERSATION_FILE
+        path = payload or _default_save_path()
         status = _save_conversation(conversation, path)
         connector.send_assistant(status)
 
     elif command == "load":
-        path = payload or _DEFAULT_CONVERSATION_FILE
+        path = payload or _DEFAULT_SAVE_DIR
+        # If path resolves to a directory, pick the most-recently modified .json
+        import pathlib
+        p = pathlib.Path(path)
+        if p.is_dir():
+            candidates = sorted(p.glob("*.json"), key=lambda f: f.stat().st_mtime)
+            if not candidates:
+                connector.send_assistant(f"\u274c No saved conversations found in {path}/")
+                return conversation
+            path = str(candidates[-1])
         new_conv, status = _load_conversation(path, system_prompt)
         if new_conv is not None:
             conversation.clear()

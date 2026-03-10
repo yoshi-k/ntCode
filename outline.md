@@ -25,10 +25,19 @@ Front-end Middleware Backend architecture
 
 ### Frontend to display messages and handle all ui. 
 Chat with llm, help, query of logs and backend message flow
+- ✅ **DONE**: `frontend/agent_loop.py` is now a pure TUI shell (`input`/`print` only).
+  It starts `run_agent()` in a background thread and communicates exclusively through
+  the `Connector` class. No LLM or tool code remains in the frontend.
 
 ### Middleware to route messages to tools and to communicate with the llm 
 Needs to handle tool implementation
 Logs interactions, and all messages send and received.
+- ✅ **DONE**: `utils/agent.py` contains the pure agent loop (conversation history,
+  LLM calls, tool dispatch, tool invocation parsing). Zero UI code.
+- ✅ **DONE**: `utils/connector.py` is the stable, thread-safe API between any
+  frontend and the agent. Two-directional queues with blocking `Event`-based receives
+  (no busy-wait). Supports `shutdown()` for clean teardown.
+  `frontend/connector.py` is a backward-compat re-export shim (imports from `utils.connector`).
 
 ### Backend 
 Tools, in particular a good mcp abstraction

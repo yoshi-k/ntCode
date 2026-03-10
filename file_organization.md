@@ -56,16 +56,26 @@ All tools import security and config helpers from `utils/`; none import from `fr
 
 ---
 
+## `utils/` additions – Agent middleware (connector + loop)
+
+Two new files added to `utils/` complete the frontend/middleware split.
+They contain no UI code and no `print()`/`input()` calls.
+
+| File | Description |
+|------|-------------|
+| `connector.py` | `Connector` class: the **only** communication channel between any frontend and the agent. Maintains two thread-safe `deque` queues (one per direction) plus a `threading.Event` per queue for blocking receives. API: `send_user(content)` / `send_assistant(content)` for convenience helpers; `receive_assistant_blocking()` / `receive_user_blocking()` for event-driven blocking reads (no busy-wait); `receive()` / `receive_user()` for non-blocking polls; `drain()` / `snapshot()` for bulk access; `shutdown()` to unblock all waiters. Only plain JSON-serialisable dicts stored. |
+| `agent.py` | `run_agent(connector)` – the pure agent loop designed to run in a background thread. Owns the `conversation` list (system prompt + history), prunes via `_prune_conversation()`, calls `execute_llm_call()`, parses tool invocations via `extract_tool_invocations()` (also defined here, moved from the old `frontend/agent_loop.py`), dispatches tools via `execute_tool_safely()`, feeds results back into the conversation, and publishes the final plain reply via `connector.send_assistant()`. No TUI code. |
+
 ## `frontend/` – User interface
 
-Handles user interaction and the agent REPL loop.
-Imports from `tools/` and `utils/`; nothing in `utils/` or `tools/` imports from here.
+Handles user interaction only. Imports `Connector` and `run_agent` from `utils/`;
+never imports LLM or tool internals directly.
 
 | File | Description |
 |------|-------------|
 | `__init__.py` | Empty package marker. |
-| `connector.py` | `Connector` class: a thread-safe `deque`-backed message channel. `send()` enqueues a `{role, content}` message and appends it to the full history; `receive()` dequeues the next message; `drain()` returns and clears all pending messages; `snapshot()` returns a read-only copy of the full history. Designed for network transparency (only plain JSON-serialisable dicts stored). Currently instantiated but not yet wired into the agent loop — reserved for a future multi-frontend architecture. |
-| `agent_loop.py` | `run_coding_agent_loop()` – the main REPL. Prints the welcome banner, owns the `conversation` list, prunes history when it exceeds `MAX_CONVERSATION_LENGTH`, calls `execute_llm_call()`, parses tool invocations via `extract_tool_invocations()` (defined in this file), dispatches each tool through `execute_tool_safely()`, appends results back to the conversation, and loops until the LLM returns a plain response. Also contains `extract_tool_invocations()`: parses `tool: NAME({…})` lines from LLM output, validates tool names against `TOOL_REGISTRY`, and silently skips malformed JSON or unknown tools. |
+| `connector.py` | Backward-compatibility shim. Re-exports `Connector` and `Message` from `utils.connector` so any code importing `from frontend.connector import Connector` continues to work. |
+| `agent_loop.py` | TUI frontend. `run_coding_agent_loop()` prints the welcome banner, instantiates a `Connector`, starts `run_agent()` in a daemon background thread, then runs the `input()` / `print()` REPL loop. Forwards user input via `connector.send_user()` and blocks on `connector.receive_assistant_blocking()` for replies. Handles `KeyboardInterrupt` / `EOFError` gracefully and calls `connector.shutdown()` on exit. |
 
 ---
 
@@ -80,17 +90,35 @@ Imports from `tools/` and `utils/`; nothing in `utils/` or `tools/` imports from
 
 ---
 
-## Notes on the `decouplingStrategy.md` target layout vs. current layout
+## Architecture layer map
 
-The strategy document describes a future `frontend / middleware / backend` split with a
-`middleware/` directory. The current code has collapsed that into three directories
-whose roles map as follows:
-
-| Strategy doc | Current directory | Contains |
+| `decouplingStrategy.md` name | Actual directory | Contains |
 |---|---|---|
-| `backend/` | `utils/` | config, security, rate_limiter, llm |
-| `middleware/tools/` + registry + parser | `tools/` | one file per tool + registry (includes tool parser and system-prompt builder) |
-| `frontend/` | `frontend/` | connector (future), agent_loop (current REPL + tool parser) |
+| `backend/` | `utils/` | `config`, `security`, `rate_limiter`, `llm` |
+| `middleware/tools/` + registry + parser | `tools/` | one file per tool + `registry.py` (tool registry, system-prompt builder, `execute_tool_safely`) |
+| `middleware/` (connector + agent) | `utils/` (`connector.py` + `agent.py`) | message channel + LLM loop + tool parser |
+| `frontend/` | `frontend/` | `agent_loop.py` (TUI shell), `connector.py` (re-export shim) |
 
-The `Connector` class in `frontend/connector.py` is implemented but not yet wired into
-`agent_loop.py`; connecting them is the next step toward a fully decoupled architecture.
+### Dependency rules (enforced)
+
+```
+frontend/  ->  utils.connector + utils.agent  (no LLM/tool internals)
+utils/     ->  tools/  (agent.py only) + stdlib + anthropic
+tools/     ->  utils/
+```
+
+### What was split in this refactor
+
+The original `frontend/agent_loop.py` was a monolith containing both TUI code
+(`input`, `print`, ANSI colours) and agent logic (conversation management, LLM
+calls, tool dispatch, tool invocation parsing).  It has been split into:
+
+* **`utils/agent.py`** – all agent logic; no UI imports.
+* **`frontend/agent_loop.py`** – TUI shell only; no LLM or tool imports.
+* **`utils/connector.py`** – the stable thread-safe API between the two.
+* **`frontend/connector.py`** – backward-compat re-export shim.
+
+Adding a new frontend (GUI, web, network) now requires only:
+1. Instantiate `Connector()` from `utils.connector`.
+2. Start `run_agent(connector)` from `utils.agent` in a thread.
+3. Call `connector.send_user()` / `connector.receive_assistant_blocking()`.

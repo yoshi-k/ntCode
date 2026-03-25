@@ -1,58 +1,62 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
 # start_qwen.sh
-# Configures the environment for ntCode.py to use a llama.cpp server
-# running on nt-angband.local with the Qwen/Qwen3-27B model, then
-# launches ntCode.py.
+# Launches ntCode.py backed by a llama.cpp server on nt-angband.local
+# running the Qwen/Qwen3-27B model.
 #
-# How the variables are consumed:
-#   utils/config.py  reads ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
-#                    ANTHROPIC_BASE_URL, and LLM_PROVIDER via os.environ.
-#   utils/llm.py     passes ANTHROPIC_BASE_URL to the Anthropic() client
-#                    and uses ANTHROPIC_MODEL / MAX_TOKENS for every call.
+# How it works
+# ------------
+# utils/config.py reads LLM_PROVIDER from the environment.  When it equals
+# "openai", utils/llm._build_llm() instantiates utils/openai_llm.OpenAILLM
+# which talks to any OpenAI-compatible HTTP server — including llama.cpp
+# running in --server mode (POST /v1/chat/completions).
 #
-# NOTE: llama.cpp speaks the OpenAI REST API (/v1/chat/completions), while
-# the anthropic SDK targets /v1/messages with its own request format.
-# Pointing ANTHROPIC_BASE_URL at the llama.cpp server therefore requires
-# a thin compatibility proxy (e.g. LiteLLM, llama-cpp-python's built-in
-# OpenAI server, or any openai-to-anthropic shim) running in front of it.
-# The variables below are correct; add a proxy if you do not have one yet.
+# No proxy is required; llama.cpp speaks the OpenAI wire protocol natively.
+#
+# Variables consumed by utils/config.py
+# -------------------------------------
+#   LLM_PROVIDER       "openai"  → use OpenAILLM instead of AnthropicLLM
+#   OPENAI_BASE_URL    root URL of the llama.cpp /v1 endpoint
+#   OPENAI_API_KEY     any non-empty string (llama.cpp ignores it)
+#   OPENAI_MODEL       model name the server was started with
+#   OPENAI_MAX_TOKENS  0 = let the server decide (omitted from request)
+#   OPENAI_TEMPERATURE sampling temperature
+#   OPENAI_TIMEOUT     per-request timeout in seconds
+#   OPENAI_MAX_RETRIES SDK-level retry attempts on transient errors
+#
+# ANTHROPIC_API_KEY is still set to a dummy value so that the Anthropic SDK
+# import inside utils/llm.py does not raise an error at module load time
+# (the import happens before the provider branch is evaluated).
 # ---------------------------------------------------------------------------
 
-# ----- llama.cpp server ----------------------------------------------------
-export LLAMA_CPP_HOST="nt-angband.local"
-export LLAMA_CPP_PORT="8080"
+# ----- llama.cpp server location -------------------------------------------
+LLAMA_HOST="nt-angband.local"
+LLAMA_PORT="8080"
 
-# ----- Variables read directly by utils/config.py and utils/llm.py ---------
+# ----- LLM provider: use the OpenAI-compatible path ------------------------
+export LLM_PROVIDER="openai"
 
-# Model name as advertised by the llama.cpp server
-export ANTHROPIC_MODEL="Qwen/Qwen3-27B"
+# ----- OpenAI-compatible settings (read by utils/config.py) ----------------
+export OPENAI_BASE_URL="http://${LLAMA_HOST}:${LLAMA_PORT}/v1"
+export OPENAI_API_KEY="llama-cpp-no-key"   # any non-empty string
+export OPENAI_MODEL="Qwen/Qwen3-27B"       # must match the loaded GGUF
+export OPENAI_MAX_TOKENS="0"               # 0 = omit, let server decide
+export OPENAI_TEMPERATURE="0.7"
+export OPENAI_TIMEOUT="120.0"              # seconds; raise for slow GPUs
+export OPENAI_MAX_RETRIES="3"
 
-# Redirect the Anthropic SDK to the local llama.cpp instance.
-# The SDK constructs the full endpoint as:  <ANTHROPIC_BASE_URL>/v1/messages
-export ANTHROPIC_BASE_URL="http://${LLAMA_CPP_HOST}:${LLAMA_CPP_PORT}"
-
-# A non-empty key is required so the SDK initialises without error;
-# llama.cpp itself does not validate it.
+# ----- Dummy Anthropic key (suppresses SDK import-time warnings) -----------
 export ANTHROPIC_API_KEY="llama-cpp-no-key"
 
-# Tell the application which LLM backend is in use
-export LLM_PROVIDER="llama.cpp"
-
-# Optional tuning — increase if the model supports a larger context window
-export MAX_TOKENS="8192"
-
-# Keep rate-limit guards relaxed for a local server
-export REQUESTS_PER_MINUTE="200"
-export TOKENS_PER_MINUTE="500000"
+# ----- Rate limiter: relax for a local server (utils/config.py) ------------
+export NTCODE_TOKEN_LIMIT_PER_MINUTE="500000"
 
 # ---------------------------------------------------------------------------
 echo "=========================================================="
-echo " ntCode — llama.cpp backend on ${LLAMA_CPP_HOST}"
+echo " ntCode — llama.cpp  (OpenAI-compatible backend)"
 echo "=========================================================="
-echo "  Base URL : ${ANTHROPIC_BASE_URL}"
-echo "  Model    : ${ANTHROPIC_MODEL}"
-echo "  Provider : ${LLM_PROVIDER}"
+echo "  Server : ${OPENAI_BASE_URL}"
+echo "  Model  : ${OPENAI_MODEL}"
 echo "=========================================================="
 echo ""
 

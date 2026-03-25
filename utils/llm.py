@@ -174,7 +174,109 @@ def _build_llm() -> LLM:
 
 # Active LLM instance used throughout the application.
 # Swap provider by setting LLM_PROVIDER in .env — no code changes needed.
+# Can also be replaced at runtime via switch_provider().
 llm: LLM = _build_llm()
+
+
+# ---------------------------------------------------------------------------
+# Runtime provider switching
+# ---------------------------------------------------------------------------
+
+# Maps short alias -> canonical backend name
+_PROVIDER_ALIASES = {
+    "anthropic": "anthropic",
+    "claude": "anthropic",
+    "openai": "openai",
+    "ollama": "openai",   # Ollama speaks the OpenAI wire protocol
+    "groq": "openai",
+    "lmstudio": "openai",
+}
+
+
+def list_providers() -> list[str]:
+    """Return the sorted list of recognised provider aliases."""
+    return sorted(_PROVIDER_ALIASES.keys())
+
+
+def current_provider_name() -> str:
+    """Return a human-readable description of the currently active provider."""
+    cls = type(llm).__name__
+    model = getattr(llm, "model", "?")
+    return f"{cls} (model={model})"
+
+
+def switch_provider(spec: str) -> str:
+    """Replace the active ``llm`` instance with a new provider.
+
+    *spec* can be:
+
+    * A bare alias:  ``"openai"``, ``"anthropic"``, ``"ollama"`` …
+      Uses the same env-var settings as startup.
+    * An alias with a model override:  ``"openai/gpt-4o"``, ``"ollama/llama3"``
+      Overrides only the model; all other settings come from env vars.
+    * ``"anthropic/claude-opus-4-5"`` — same pattern for Anthropic.
+
+    Returns a human-readable status string.
+    Raises ``ValueError`` for unknown aliases or missing credentials.
+    """
+    global llm
+
+    # Parse optional model override
+    if "/" in spec:
+        alias, model_override = spec.split("/", 1)
+        model_override = model_override.strip()
+    else:
+        alias, model_override = spec.strip(), None
+
+    alias = alias.lower().strip()
+    if alias not in _PROVIDER_ALIASES:
+        known = ", ".join(sorted(_PROVIDER_ALIASES))
+        raise ValueError(f"Unknown provider alias '{alias}'. Known: {known}")
+
+    canonical = _PROVIDER_ALIASES[alias]
+
+    if canonical == "anthropic":
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY is not set in the environment.")
+        model = model_override or os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
+        new_llm: LLM = AnthropicLLM(
+            api_key=api_key,
+            model=model,
+        )
+    else:  # openai-compatible
+        from utils.openai_llm import OpenAILLM
+        from utils.config import (
+            OPENAI_BASE_URL,
+            OPENAI_API_KEY,
+            OPENAI_MODEL,
+            OPENAI_MAX_TOKENS,
+            OPENAI_TEMPERATURE,
+            OPENAI_TIMEOUT,
+            OPENAI_MAX_RETRIES,
+        )
+        _DEFAULT_URLS: dict[str, str] = {
+            "ollama": "http://localhost:11434/v1",
+            "lmstudio": "http://localhost:1234/v1",
+            "groq": "https://api.groq.com/openai/v1",
+            "openai": "https://api.openai.com/v1",
+        }
+        base_url = OPENAI_BASE_URL or _DEFAULT_URLS.get(alias, "http://localhost:11434/v1")
+        model = model_override or OPENAI_MODEL
+        new_llm = OpenAILLM(
+            base_url=base_url,
+            api_key=OPENAI_API_KEY,
+            model=model,
+            max_tokens=OPENAI_MAX_TOKENS,
+            temperature=OPENAI_TEMPERATURE,
+            timeout=OPENAI_TIMEOUT,
+            max_retries=OPENAI_MAX_RETRIES,
+        )
+
+    llm = new_llm
+    desc = current_provider_name()
+    logger.info("[LLM] Provider switched to: %s", desc)
+    return f"\u2705 Switched to {desc}"
 
 
 def execute_llm_call(conversation: List[Dict[str, str]]) -> str:

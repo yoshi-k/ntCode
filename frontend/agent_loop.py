@@ -40,7 +40,42 @@ Available commands:
   /load  [file]          Load conversation from file
   /prompt                Show the current system prompt
   /tools                 List available tools
+  /provider              Show the current LLM provider
+  /provider list         List all available provider aliases
+  /provider <alias>      Switch provider  (e.g. /provider ollama)
+  /provider <alias>/<model>  Switch provider and model  (e.g. /provider openai/gpt-4o)
 """
+
+
+def _handle_provider_command(arg: str, connector: Connector) -> None:
+    """Handle all /provider sub-commands locally (no agent round-trip needed).
+
+    * ``/provider``          — print the active provider description.
+    * ``/provider list``     — print all known aliases.
+    * ``/provider <spec>``   — switch; spec may be ``alias`` or ``alias/model``.
+    """
+    from utils.llm import list_providers, current_provider_name, switch_provider
+
+    arg = arg.strip()
+
+    if not arg:
+        print(f"Current provider: {current_provider_name()}")
+        return
+
+    if arg.lower() == "list":
+        print("Available provider aliases:")
+        for alias in list_providers():
+            print(f"  {alias}")
+        return
+
+    # Switch request
+    try:
+        status = switch_provider(arg)
+        print(status)
+    except ValueError as exc:
+        print(f"❌ {exc}")
+    except Exception as exc:
+        print(f"❌ Failed to switch provider: {exc}")
 
 
 def _handle_slash_command(cmd: str, connector: Connector) -> bool:
@@ -78,6 +113,9 @@ def _handle_slash_command(cmd: str, connector: Connector) -> bool:
     elif name == "/load":
         connector.send_control("load", arg or None)
         _wait_and_print_reply(connector)
+
+    elif name == "/provider":
+        _handle_provider_command(arg, connector)
 
     else:
         print(f"Unknown command: {name}  (type /help for a list)")

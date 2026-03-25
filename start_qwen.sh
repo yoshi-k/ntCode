@@ -1,49 +1,58 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
 # start_qwen.sh
-# Sets environment variables to point ntCode.py at a llama.cpp server
-# running on nt-angband.local with the Qwen/Qwen3-27B model.
+# Configures the environment for ntCode.py to use a llama.cpp server
+# running on nt-angband.local with the Qwen/Qwen3-27B model, then
+# launches ntCode.py.
 #
-# llama.cpp exposes an OpenAI-compatible REST API, not an Anthropic one.
-# The anthropic Python SDK respects ANTHROPIC_BASE_URL to redirect calls,
-# but the wire format still differs.  The simplest zero-code-change approach
-# is to use the OpenAI-compatible /v1 endpoint together with the
-# OPENAI_* variables and swap the SDK — OR just point ANTHROPIC_BASE_URL at
-# the llama.cpp server so the SDK sends requests there.
+# How the variables are consumed:
+#   utils/config.py  reads ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
+#                    ANTHROPIC_BASE_URL, and LLM_PROVIDER via os.environ.
+#   utils/llm.py     passes ANTHROPIC_BASE_URL to the Anthropic() client
+#                    and uses ANTHROPIC_MODEL / MAX_TOKENS for every call.
 #
-# If you later switch ntCode.py to the openai SDK you only need to change
-# OPENAI_BASE_URL / OPENAI_API_KEY below.
+# NOTE: llama.cpp speaks the OpenAI REST API (/v1/chat/completions), while
+# the anthropic SDK targets /v1/messages with its own request format.
+# Pointing ANTHROPIC_BASE_URL at the llama.cpp server therefore requires
+# a thin compatibility proxy (e.g. LiteLLM, llama-cpp-python's built-in
+# OpenAI server, or any openai-to-anthropic shim) running in front of it.
+# The variables below are correct; add a proxy if you do not have one yet.
 # ---------------------------------------------------------------------------
 
-# ----- llama.cpp server location ------------------------------------------
+# ----- llama.cpp server ----------------------------------------------------
 export LLAMA_CPP_HOST="nt-angband.local"
 export LLAMA_CPP_PORT="8080"
-export LLAMA_CPP_BASE_URL="http://${LLAMA_CPP_HOST}:${LLAMA_CPP_PORT}"
 
-# ----- Model name (must match what llama.cpp reports) ----------------------
+# ----- Variables read directly by utils/config.py and utils/llm.py ---------
+
+# Model name as advertised by the llama.cpp server
 export ANTHROPIC_MODEL="Qwen/Qwen3-27B"
 
-# ----- Redirect the Anthropic SDK to the llama.cpp OpenAI-compat endpoint -
-# The anthropic SDK sends requests to  <ANTHROPIC_BASE_URL>/v1/messages
-# llama.cpp listens on                 <base>/v1/chat/completions
-# These are different paths, so a thin proxy or a local shim is the cleanest
-# solution.  For a quick start we point the variable anyway; adjust if you
-# add a proxy layer in front of llama.cpp.
-export ANTHROPIC_BASE_URL="${LLAMA_CPP_BASE_URL}"
+# Redirect the Anthropic SDK to the local llama.cpp instance.
+# The SDK constructs the full endpoint as:  <ANTHROPIC_BASE_URL>/v1/messages
+export ANTHROPIC_BASE_URL="http://${LLAMA_CPP_HOST}:${LLAMA_CPP_PORT}"
 
-# A dummy key is required so the SDK does not refuse to initialise.
+# A non-empty key is required so the SDK initialises without error;
+# llama.cpp itself does not validate it.
 export ANTHROPIC_API_KEY="llama-cpp-no-key"
 
-# ----- OpenAI-compat variables (handy if you switch the SDK) ---------------
-export OPENAI_BASE_URL="${LLAMA_CPP_BASE_URL}/v1"
-export OPENAI_API_KEY="llama-cpp-no-key"
+# Tell the application which LLM backend is in use
+export LLM_PROVIDER="llama.cpp"
+
+# Optional tuning — increase if the model supports a larger context window
+export MAX_TOKENS="8192"
+
+# Keep rate-limit guards relaxed for a local server
+export REQUESTS_PER_MINUTE="200"
+export TOKENS_PER_MINUTE="500000"
 
 # ---------------------------------------------------------------------------
 echo "=========================================================="
-echo " ntCode — llama.cpp backend"
+echo " ntCode — llama.cpp backend on ${LLAMA_CPP_HOST}"
 echo "=========================================================="
-echo "  Server : ${LLAMA_CPP_BASE_URL}"
-echo "  Model  : ${ANTHROPIC_MODEL}"
+echo "  Base URL : ${ANTHROPIC_BASE_URL}"
+echo "  Model    : ${ANTHROPIC_MODEL}"
+echo "  Provider : ${LLM_PROVIDER}"
 echo "=========================================================="
 echo ""
 

@@ -1,4 +1,5 @@
 ipython
 anthropic
-dotenv
+python-dotenv
+httpx
 

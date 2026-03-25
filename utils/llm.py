@@ -122,11 +122,59 @@ class AnthropicLLM(LLM):
 
 import os
 
-# Active LLM instance used throughout the application
-llm: LLM = AnthropicLLM(
-    api_key=os.environ["ANTHROPIC_API_KEY"],
-    model=os.environ.get("NTCODE_MODEL", DEFAULT_MODEL),
-)
+
+def _build_llm() -> LLM:
+    """
+    Instantiate the LLM provider selected by the ``LLM_PROVIDER`` env var.
+
+    ``"anthropic"`` (default)
+        Uses :class:`AnthropicLLM` with the Anthropic SDK.
+        Requires ``ANTHROPIC_API_KEY``.
+
+    ``"openai"``
+        Uses :class:`~utils.openai_llm.OpenAILLM` — connects to any
+        OpenAI-compatible HTTP endpoint (Ollama, LM Studio, vLLM, OpenAI,
+        Groq, …).  Requires ``OPENAI_BASE_URL``, ``OPENAI_API_KEY``,
+        ``OPENAI_MODEL`` in ``.env``.
+    """
+    from utils.config import LLM_PROVIDER  # late import avoids circular deps
+
+    if LLM_PROVIDER == "openai":
+        from utils.openai_llm import OpenAILLM
+        from utils.config import (
+            OPENAI_BASE_URL,
+            OPENAI_API_KEY,
+            OPENAI_MODEL,
+            OPENAI_MAX_TOKENS,
+            OPENAI_TEMPERATURE,
+            OPENAI_TIMEOUT,
+            OPENAI_MAX_RETRIES,
+        )
+        logger.info(
+            f"[LLM] Provider: openai-compatible  "
+            f"url={OPENAI_BASE_URL}  model={OPENAI_MODEL}"
+        )
+        return OpenAILLM(
+            base_url=OPENAI_BASE_URL,
+            api_key=OPENAI_API_KEY,
+            model=OPENAI_MODEL,
+            max_tokens=OPENAI_MAX_TOKENS,
+            temperature=OPENAI_TEMPERATURE,
+            timeout=OPENAI_TIMEOUT,
+            max_retries=OPENAI_MAX_RETRIES,
+        )
+
+    # Default: Anthropic
+    logger.info(f"[LLM] Provider: anthropic  model={os.environ.get('NTCODE_MODEL', DEFAULT_MODEL)}")
+    return AnthropicLLM(
+        api_key=os.environ["ANTHROPIC_API_KEY"],
+        model=os.environ.get("NTCODE_MODEL", DEFAULT_MODEL),
+    )
+
+
+# Active LLM instance used throughout the application.
+# Swap provider by setting LLM_PROVIDER in .env — no code changes needed.
+llm: LLM = _build_llm()
 
 
 def execute_llm_call(conversation: List[Dict[str, str]]) -> str:

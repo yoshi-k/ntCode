@@ -24,6 +24,26 @@ API_TIMEOUT = float(
 ALLOWED_BASE_PATHS = [Path.cwd()]  # Only allow current directory and subdirectories
 
 # ---------------------------------------------------------------------------
+# LLM provider selection
+# ---------------------------------------------------------------------------
+# Set LLM_PROVIDER=openai to use any OpenAI-compatible endpoint.
+# Leave unset (or "anthropic") to use the Anthropic SDK (default).
+LLM_PROVIDER: str = os.environ.get("LLM_PROVIDER", "anthropic").lower().strip()
+
+# OpenAI-compatible settings (Ollama, LM Studio, vLLM, OpenAI, Groq, …)
+# OPENAI_BASE_URL : root URL of the server, e.g. http://localhost:11434/v1
+# OPENAI_API_KEY  : bearer token; local servers accept any non-empty string
+# OPENAI_MODEL    : model name the server recognises, e.g. "llama3", "gpt-4o"
+OPENAI_BASE_URL: str = os.environ.get("OPENAI_BASE_URL", "http://localhost:11434/v1")
+OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "ollama")
+OPENAI_MODEL: str = os.environ.get("OPENAI_MODEL", "llama3")
+# 0 means "let the server decide" (omitted from the request body)
+OPENAI_MAX_TOKENS: int = int(os.environ.get("OPENAI_MAX_TOKENS", "0"))
+OPENAI_TEMPERATURE: float = float(os.environ.get("OPENAI_TEMPERATURE", "0.7"))
+OPENAI_TIMEOUT: float = float(os.environ.get("OPENAI_TIMEOUT", "120.0"))
+OPENAI_MAX_RETRIES: int = int(os.environ.get("OPENAI_MAX_RETRIES", "3"))
+
+# ---------------------------------------------------------------------------
 # Token rate limiter constants
 # ---------------------------------------------------------------------------
 

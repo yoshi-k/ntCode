@@ -19,6 +19,8 @@ The TUI (or any other frontend) owns the ``Connector`` and starts
 
 import json
 import os
+import pathlib
+import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from utils.config import (
@@ -27,7 +29,7 @@ from utils.config import (
     MAX_CONVERSATION_LENGTH,
     logger,
 )
-from utils.llm import execute_llm_call
+from utils.llm import execute_llm_call, SessionHeader, ConversationManager
 from utils.connector import Connector
 from tools.registry import TOOL_REGISTRY, get_full_system_prompt, execute_tool_safely
 
@@ -37,8 +39,6 @@ _DEFAULT_SAVE_DIR = "saves"
 
 def _default_save_path() -> str:
     """Return a timestamped path inside the saves/ folder."""
-    import datetime
-    import pathlib
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     p = pathlib.Path(_DEFAULT_SAVE_DIR) / f"conversation-{timestamp}.json"
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -123,26 +123,6 @@ def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
 
 
 # ---------------------------------------------------------------------------
-# Conversation pruning helper
-# ---------------------------------------------------------------------------
-
-def _prune_conversation(conversation: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Keep the system prompt plus the most recent *MAX_CONVERSATION_LENGTH* messages."""
-    system_msgs = [m for m in conversation if m["role"] == "system"]
-    non_system = [m for m in conversation if m["role"] != "system"]
-
-    if len(non_system) > MAX_CONVERSATION_LENGTH:
-        logger.info(
-            "Conversation too long (%d messages), pruning to last %d",
-            len(non_system),
-            MAX_CONVERSATION_LENGTH,
-        )
-        non_system = non_system[-MAX_CONVERSATION_LENGTH:]
-
-    return system_msgs + non_system
-
-
-# ---------------------------------------------------------------------------
 # Error-response detection
 # ---------------------------------------------------------------------------
 
@@ -166,103 +146,86 @@ def _is_error_response(text: str) -> bool:
 # Conversation persistence helpers
 # ---------------------------------------------------------------------------
 
-def _save_conversation(conversation: List[Dict[str, Any]], path: str) -> str:
-    """Serialise *conversation* to a JSON file at *path*.
+def _save_conversation(mgr: ConversationManager, path: str) -> str:
+    """Serialise the task-context messages to a JSON file at *path*.
 
     Returns a human-readable status string.
     """
     try:
         abs_path = os.path.abspath(path)
+        flat = mgr.as_flat_conversation()
         with open(abs_path, "w", encoding="utf-8") as fh:
-            json.dump(conversation, fh, ensure_ascii=False, indent=2)
-        logger.info("Conversation saved to %s (%d messages)", abs_path, len(conversation))
-        return f"Conversation saved to {abs_path} ({len(conversation)} messages)."
+            json.dump(flat, fh, ensure_ascii=False, indent=2)
+        logger.info("Conversation saved to %s (%d messages)", abs_path, len(flat))
+        return f"Conversation saved to {abs_path} ({len(flat)} messages)."
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to save conversation: %s", exc)
         return f"\u274c Failed to save conversation: {exc}"
 
 
-def _load_conversation(
-    path: str, system_prompt: str
-) -> Tuple[List[Dict[str, Any]], str]:
-    """Load a previously saved conversation from *path*.
+def _load_conversation(mgr: ConversationManager, path: str) -> str:
+    """Load a previously saved conversation into *mgr*'s task context.
 
-    Always re-inserts the current system prompt as the first message so the
-    agent uses up-to-date tool descriptions even when loading an old file.
-
-    Returns ``(conversation, status_string)``.
+    Returns a human-readable status string.
     """
     try:
         abs_path = os.path.abspath(path)
         with open(abs_path, "r", encoding="utf-8") as fh:
-            loaded: List[Dict[str, Any]] = json.load(fh)
-        # Strip any old system messages and prepend the current one
-        non_system = [m for m in loaded if m.get("role") != "system"]
-        conversation = [{"role": "system", "content": system_prompt}] + non_system
-        logger.info(
-            "Conversation loaded from %s (%d messages)", abs_path, len(conversation)
-        )
-        return conversation, f"Conversation loaded from {abs_path} ({len(non_system)} messages restored)."
+            flat: List[Dict[str, Any]] = json.load(fh)
+        # Strip any system-role entries that might exist in old saves.
+        flat = [m for m in flat if m.get("role") != "system"]
+        mgr.start_task()           # clear current task context
+        mgr.restore_from_flat(flat)
+        logger.info("Conversation loaded from %s (%d messages)", abs_path, len(flat))
+        return f"Conversation loaded from {abs_path} ({len(flat)} messages restored)."
     except FileNotFoundError:
         msg = f"\u274c File not found: {path}"
         logger.warning(msg)
-        return None, msg
+        return msg
     except Exception as exc:  # noqa: BLE001
         msg = f"\u274c Failed to load conversation: {exc}"
         logger.error(msg)
-        return None, msg
+        return msg
 
 
 # ---------------------------------------------------------------------------
-# Control-message handler
+# Control-message handler (ConversationManager-aware)
 # ---------------------------------------------------------------------------
 
 def _handle_control(
     msg: Dict[str, Any],
-    conversation: List[Dict[str, Any]],
+    mgr: ConversationManager,
     connector: "Connector",
-) -> List[Dict[str, Any]]:
-    """Execute a control command and publish a status reply.
-
-    Returns the (possibly replaced) conversation list.
-    """
+) -> None:
+    """Execute a control command and publish a status reply via *connector*."""
     command = msg.get("command", "")
     payload = msg.get("payload", "") or ""
-    system_prompt = get_full_system_prompt()
 
     if command == "reset":
-        conversation.clear()
-        conversation.append({"role": "system", "content": system_prompt})
+        mgr.start_task()
         connector.send_assistant("Conversation reset. Starting fresh!")
         logger.info("Conversation reset by user.")
 
     elif command == "save":
         path = payload or _default_save_path()
-        status = _save_conversation(conversation, path)
-        connector.send_assistant(status)
+        connector.send_assistant(_save_conversation(mgr, path))
 
     elif command == "load":
         path = payload or _DEFAULT_SAVE_DIR
-        # If path resolves to a directory, pick the most-recently modified .json
-        import pathlib
         p = pathlib.Path(path)
         if p.is_dir():
             candidates = sorted(p.glob("*.json"), key=lambda f: f.stat().st_mtime)
             if not candidates:
-                connector.send_assistant(f"\u274c No saved conversations found in {path}/")
-                return conversation
+                connector.send_assistant(
+                    f"\u274c No saved conversations found in {path}/"
+                )
+                return
             path = str(candidates[-1])
-        new_conv, status = _load_conversation(path, system_prompt)
-        if new_conv is not None:
-            conversation.clear()
-            conversation.extend(new_conv)
-        connector.send_assistant(status)
+        connector.send_assistant(_load_conversation(mgr, path))
 
     else:
         connector.send_assistant(f"\u274c Unknown control command: {command!r}")
         logger.warning("Unknown control command: %s", command)
-
-    return conversation
 
 
 # ---------------------------------------------------------------------------
@@ -278,13 +241,21 @@ def run_agent(connector: Connector) -> None:
     produces a plain (non-tool) response, publishes it via
     :meth:`~utils.connector.Connector.send_assistant`, and waits again.
 
+    Uses ConversationManager to maintain a session-header cache point:
+    the system prompt and documentation files are sent with cache_control
+    markers so Claude can reuse its server-side KV-cache across turns,
+    reducing latency and token cost for the stable prefix.
+
     Exits cleanly when the connector is shut down.
     """
-    conversation: List[Dict[str, Any]] = [
-        {"role": "system", "content": get_full_system_prompt()}
-    ]
+    system_prompt = get_full_system_prompt()
+    header = SessionHeader(system_prompt=system_prompt)
+    mgr = ConversationManager(header)
 
-    logger.info("AgentLoop started, waiting for user messages.")
+    logger.info(
+        "AgentLoop started with session-header caching, "
+        "waiting for user messages."
+    )
 
     while True:
         # ----------------------------------------------------------------
@@ -297,19 +268,23 @@ def run_agent(connector: Connector) -> None:
 
         # Handle control commands (save / load / reset) before touching the LLM
         if user_msg.get("role") == "control":
-            _handle_control(user_msg, conversation, connector)
+            _handle_control(user_msg, mgr, connector)
             continue
 
-        conversation.append({"role": "user", "content": user_msg["content"]})
+        mgr.add_user(user_msg["content"])
 
         # ----------------------------------------------------------------
         # Inner loop: LLM -> tools -> LLM ... until plain reply
         # ----------------------------------------------------------------
         while True:
             try:
-                conversation = _prune_conversation(conversation)
+                mgr.prune_task_messages(MAX_CONVERSATION_LENGTH)
 
-                assistant_response = execute_llm_call(conversation)
+                assistant_response = execute_llm_call(
+                    conversation=[],
+                    system_override=mgr.system_for_api(),
+                    messages_override=mgr.messages_for_api(),
+                )
 
                 # Propagate provider-level errors directly to the TUI
                 if _is_error_response(assistant_response):
@@ -325,16 +300,12 @@ def run_agent(connector: Connector) -> None:
                 if not tool_invocations:
                     # Plain LLM reply - publish and wait for next user turn
                     connector.send_assistant(assistant_response)
-                    conversation.append(
-                        {"role": "assistant", "content": assistant_response}
-                    )
+                    mgr.add_assistant(assistant_response)
                     break
 
                 # Record assistant's tool-call message *before* tool results
                 # so the LLM sees its own invocation in context.
-                conversation.append(
-                    {"role": "assistant", "content": assistant_response}
-                )
+                mgr.add_assistant(assistant_response)
 
                 # Execute each tool and feed results back into the conversation
                 for name, args in tool_invocations:
@@ -345,51 +316,50 @@ def run_agent(connector: Connector) -> None:
                     # Verbose-mode approval: ask the TUI before executing
                     if VERBOSE_MODE:
                         connector.request_approval(name, args)
-                        approval = connector.receive_approval_response_blocking(timeout=60)
+                        approval = connector.receive_approval_response_blocking(
+                            timeout=60
+                        )
                         if approval is None or not approval.get("approved", False):
-                            logger.info("Tool %s rejected by user (verbose mode)", name)
+                            logger.info(
+                                "Tool %s rejected by user (verbose mode)", name
+                            )
                             denied_result = {
                                 "error": "Tool execution rejected by user.",
                                 "tool_name": name,
                                 "success": False,
                             }
-                            conversation.append(
-                                {
-                                    "role": "user",
-                                    "content": f"tool_result({json.dumps(denied_result)})",
-                                }
+                            mgr.add_user(
+                                f"tool_result({json.dumps(denied_result)})"
                             )
                             continue
 
                     tool_fn = TOOL_REGISTRY[name]
                     try:
                         if DEBUG_MODE:
-                            logger.debug("Executing tool %s args=%s", name, args)
+                            logger.debug(
+                                "Executing tool %s args=%s", name, args
+                            )
 
                         result = execute_tool_safely(name, tool_fn, args)
 
                         if DEBUG_MODE:
                             logger.debug("Tool %s result: %s", name, result)
 
-                        conversation.append(
-                            {
-                                "role": "user",
-                                "content": f"tool_result({json.dumps(result, ensure_ascii=False)})",
-                            }
+                        mgr.add_user(
+                            f"tool_result({json.dumps(result, ensure_ascii=False)})"
                         )
 
                     except Exception as exc:  # noqa: BLE001
-                        logger.error("Tool execution failed for %s: %s", name, exc)
+                        logger.error(
+                            "Tool execution failed for %s: %s", name, exc
+                        )
                         error_result = {
                             "error": f"Tool execution failed: {exc}",
                             "tool_name": name,
                             "success": False,
                         }
-                        conversation.append(
-                            {
-                                "role": "user",
-                                "content": f"tool_result({json.dumps(error_result)})",
-                            }
+                        mgr.add_user(
+                            f"tool_result({json.dumps(error_result)})"
                         )
 
             except Exception as exc:  # noqa: BLE001

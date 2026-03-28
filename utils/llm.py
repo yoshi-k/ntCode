@@ -1,7 +1,26 @@
+"""LLM providers, prompt-caching helpers, and ConversationManager for ntCode.
+
+This module contains:
+
+* LLM / AnthropicLLM   - provider abstraction and Anthropic implementation.
+* apply_cache_control   - stamps a content block with a cache_control marker.
+* mark_last_content_block - marks the tail block of a list for caching.
+* SessionHeader         - builds the stable, cached session-header prefix.
+* ConversationManager   - task-scoped history with cache-point resets.
+* execute_llm_call      - dispatch to the active provider (legacy + cache-aware).
+
+The context helpers are defined here (not in a subpackage) so that they can
+always be written to disk without requiring subdirectory creation::
+
+    from utils.llm import SessionHeader, ConversationManager
+"""
+
 import json
+import os
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 import anthropic
 
@@ -16,26 +35,359 @@ from utils.config import (
 from utils.rate_limiter import _rate_limiter
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Prompt-caching helpers
+# ===========================================================================
+
+_EPHEMERAL: dict[str, str] = {"type": "ephemeral"}
+
+
+def apply_cache_control(block: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of *block* with a cache_control marker attached.
+
+    The original dict is never mutated.  The marker instructs Claude to store
+    everything up to and including this block in its server-side KV-cache
+    (prompt-caching-2024-07-31 beta).
+
+    Args:
+        block: A single Claude content block, e.g.
+               {"type": "text", "text": "..."}.
+
+    Returns:
+        A new dict equal to *block* plus
+        "cache_control": {"type": "ephemeral"}.
+    """
+    return {**block, "cache_control": _EPHEMERAL}
+
+
+def mark_last_content_block(content: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return a copy of *content* where only the last block is cache-marked.
+
+    Claude allows at most four cache breakpoints per request; marking only
+    the tail block of a logical section keeps breakpoint usage minimal.
+
+    Args:
+        content: A non-empty list of Claude content block dicts.
+
+    Returns:
+        A new list; all blocks unchanged except the last, which gains
+        cache_control.
+
+    Raises:
+        ValueError: If *content* is empty.
+    """
+    if not content:
+        raise ValueError("content list must not be empty")
+    *head, tail = content
+    return head + [apply_cache_control(tail)]
+
+
+# ===========================================================================
+# SessionHeader
+# ===========================================================================
+
+_ASSISTANT_ACK = (
+    "Understood. I have read the project documentation "
+    "(agent.md, outline.md, file_organization.md) and am ready to assist."
+)
+
+
+class SessionHeader:
+    """Builds and owns the cacheable session-header prefix.
+
+    The session header consists of two parts sent at the top of every API
+    request:
+
+    1. System block (the system= parameter) - the full system prompt (tool
+       descriptions + instructions), marked with cache_control so Claude
+       caches it server-side.
+
+    2. User/assistant message pair - a user message embedding the core
+       documentation files (agent.md, outline.md, file_organization.md)
+       followed by a short assistant acknowledgement.  The last content
+       block of the user message is also cache-marked.
+
+    Together these form the session cache point: once Claude processes them
+    on the first request, subsequent requests beginning with the same bytes
+    hit the cache - faster and ~10x cheaper for the cached tokens.
+
+    The header is stateless with respect to tasks - constructed once at
+    agent startup and never mutated.  ConversationManager prepends it to
+    every API call transparently.
+
+    Attributes:
+        system_prompt: Raw system-prompt string.
+        doc_paths:     Ordered list of documentation file paths to embed.
+    """
+
+    def __init__(
+        self,
+        system_prompt: str,
+        doc_paths: list[str] | None = None,
+    ) -> None:
+        """
+        Args:
+            system_prompt: The full system prompt, e.g. from
+                           tools.registry.get_full_system_prompt().
+            doc_paths:     Documentation files to embed in the user-turn
+                           header message.  Defaults to the three canonical
+                           ntCode docs when None.
+        """
+        self.system_prompt: str = system_prompt
+        self.doc_paths: list[str] = doc_paths if doc_paths is not None else [
+            "agent.md",
+            "outline.md",
+            "file_organization.md",
+        ]
+        # Eagerly load docs so missing-file errors surface at startup.
+        self._doc_blocks: list[dict[str, Any]] = self._load_docs()
+
+    def _load_docs(self) -> list[dict[str, Any]]:
+        """Read each doc file and return one plain text content block per file."""
+        blocks: list[dict[str, Any]] = []
+        for path_str in self.doc_paths:
+            path = Path(path_str)
+            try:
+                text = path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                logger.warning(
+                    "SessionHeader: doc file not found, skipping: %s", path_str
+                )
+                continue
+            except OSError as exc:
+                logger.warning(
+                    "SessionHeader: could not read %s: %s", path_str, exc
+                )
+                continue
+            blocks.append({"type": "text", "text": f"### {path.name}\n{text}"})
+        return blocks
+
+    def system_block(self) -> list[dict[str, Any]]:
+        """Return the value to pass as system= in the Anthropic API call.
+
+        The system prompt is wrapped in a single cache-marked text block so
+        Claude caches all tokens up to and including this block.
+
+        Returns:
+            [{"type": "text", "text": "...",
+              "cache_control": {"type": "ephemeral"}}]
+        """
+        return [apply_cache_control({"type": "text", "text": self.system_prompt})]
+
+    def as_user_message(self) -> dict[str, Any]:
+        """Build the user-turn message that carries the documentation files.
+
+        The last content block is cache-marked so Claude caches everything
+        in this message together with the system prompt above it.
+
+        Returns:
+            {"role": "user", "content": [...]} ready for the messages list.
+        """
+        blocks = list(self._doc_blocks)
+        if not blocks:
+            blocks = [{"type": "text", "text": "(no documentation loaded)"}]
+        return {"role": "user", "content": mark_last_content_block(blocks)}
+
+    def as_assistant_ack(self) -> dict[str, Any]:
+        """Return a minimal assistant acknowledgement to follow the header message.
+
+        Claude requires strictly alternating user/assistant turns.  After the
+        user-side header we inject a short canned reply so the next real user
+        message is accepted without a turn-order error.
+
+        Returns:
+            {"role": "assistant", "content": [...]}
+        """
+        return {
+            "role": "assistant",
+            "content": [{"type": "text", "text": _ASSISTANT_ACK}],
+        }
+
+    def as_message_pair(self) -> list[dict[str, Any]]:
+        """Return [user_header_message, assistant_ack].
+
+        Prepend to every request's messages list so the session header is
+        always in position and eligible for cache reuse.
+        """
+        return [self.as_user_message(), self.as_assistant_ack()]
+
+
+# ===========================================================================
+# ConversationManager
+# ===========================================================================
+
+
+class ConversationManager:
+    """Manages the full conversation with cache-point awareness.
+
+    The conversation is split into two logical regions:
+
+    * Session header - the stable prefix owned by SessionHeader.
+      Always prepended to every API call with Claude cache_control markers.
+      Never discarded between tasks.
+
+    * Task context - everything that follows the header for the current task.
+      Discarded (reset to the cache point) when start_task() is called.
+
+    Typical usage::
+
+        from tools.registry import get_full_system_prompt
+        from utils.llm import SessionHeader, ConversationManager
+
+        header = SessionHeader(system_prompt=get_full_system_prompt())
+        mgr    = ConversationManager(header)
+
+        mgr.start_task("Refactor the login module")
+        mgr.add_assistant("Reading the file...")
+        mgr.add_user("tool_result(...)")
+
+        system   = mgr.system_for_api()    # pass as system=
+        messages = mgr.messages_for_api()  # pass as messages=
+
+    Attributes:
+        session_header: The SessionHeader that owns the cached prefix.
+    """
+
+    def __init__(self, session_header: SessionHeader) -> None:
+        self.session_header: SessionHeader = session_header
+        self._task_messages: list[dict[str, Any]] = []
+
+    def start_task(self, task_description: str = "") -> None:
+        """Begin a new task, resetting the conversation to the cache point.
+
+        All messages accumulated since the last start_task() call are
+        discarded.  The session header is preserved and re-sent with cache
+        markers so Claude can reuse its server-side KV-cache.
+
+        Args:
+            task_description: If non-empty, added as the first user message
+                of the new task context.
+        """
+        prev = len(self._task_messages)
+        self._task_messages = []
+        logger.info(
+            "ConversationManager: reset to cache point (discarded %d message(s))", prev
+        )
+        if task_description:
+            self.add_user(task_description)
+
+    def add_user(self, text: str) -> None:
+        """Append a plain user-role text message to the current task context."""
+        self._task_messages.append(
+            {"role": "user", "content": [{"type": "text", "text": text}]}
+        )
+
+    def add_assistant(self, text: str) -> None:
+        """Append a plain assistant-role text message to the current task context."""
+        self._task_messages.append(
+            {"role": "assistant", "content": [{"type": "text", "text": text}]}
+        )
+
+    def add_message(
+        self, role: str, content: "str | list[dict[str, Any]]"
+    ) -> None:
+        """Append a message with an arbitrary content payload.
+
+        Args:
+            role:    "user" or "assistant".
+            content: Plain string (auto-wrapped) or a pre-built block list.
+        """
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+        self._task_messages.append({"role": role, "content": content})
+
+    def system_for_api(self) -> list[dict[str, Any]]:
+        """Return the system= parameter value for the Anthropic API."""
+        return self.session_header.system_block()
+
+    def messages_for_api(self) -> list[dict[str, Any]]:
+        """Return [header_user, header_ack, *task_messages] for the API."""
+        return self.session_header.as_message_pair() + list(self._task_messages)
+
+    def prune_task_messages(self, max_messages: int) -> None:
+        """Trim the task-local message list to at most *max_messages* entries.
+
+        Keeps the most recent messages.  The session header is never pruned.
+        """
+        if len(self._task_messages) > max_messages:
+            before = len(self._task_messages)
+            self._task_messages = self._task_messages[-max_messages:]
+            logger.info(
+                "ConversationManager: pruned %d -> %d task messages",
+                before, len(self._task_messages),
+            )
+
+    def as_flat_conversation(self) -> list[dict[str, Any]]:
+        """Return a flat conversation list for JSON serialisation (save/load).
+
+        The returned list has role=user/assistant messages only (no cache
+        markers), suitable for json.dump and later restore via
+        restore_from_flat().
+        """
+        result: list[dict[str, Any]] = []
+        for msg in self._task_messages:
+            role = msg["role"]
+            content = msg["content"]
+            if isinstance(content, list):
+                text = " ".join(
+                    b.get("text", "") for b in content if b.get("type") == "text"
+                )
+            else:
+                text = str(content)
+            result.append({"role": role, "content": text})
+        return result
+
+    def restore_from_flat(self, flat: list[dict[str, Any]]) -> None:
+        """Replace the task context with a previously serialised flat list."""
+        self._task_messages = []
+        for msg in flat:
+            role = msg.get("role", "user")
+            text = msg.get("content", "")
+            if role == "user":
+                self.add_user(text)
+            else:
+                self.add_assistant(text)
+
+    @property
+    def task_message_count(self) -> int:
+        """Number of messages in the current task context (excluding header)."""
+        return len(self._task_messages)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"ConversationManager(task_messages={self.task_message_count})"
+
+
+# ===========================================================================
 # LLM provider abstraction
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 
 class LLM(ABC):
     """Abstract base class for LLM providers."""
 
     @abstractmethod
-    def call(self, system: str, messages: List[Dict[str, str]]) -> str:
-        """
-        Send a conversation to the LLM and return the response text.
-        :param system: System prompt string.
-        :param messages: List of {"role": ..., "content": ...} dicts (no system messages).
-        :return: Response text from the model.
+    def call(self, system: Any, messages: List[Dict[str, Any]]) -> str:
+        """Send a conversation to the LLM and return the response text.
+
+        Args:
+            system:   System prompt - either a plain string or a list of
+                      content blocks (the latter carries cache_control markers
+                      for Claude prompt caching).
+            messages: Conversation history; no system messages included.
+
+        Returns:
+            Response text from the model.
         """
 
 
 class AnthropicLLM(LLM):
-    """LLM implementation backed by the Anthropic Claude API."""
+    """LLM implementation backed by the Anthropic Claude API.
+
+    Supports prompt caching: when *system* is passed as a list[dict] with
+    cache_control markers (built by SessionHeader) the beta header
+    prompt-caching-2024-07-31 is added automatically and cached tokens are
+    billed at ~10x lower cost.  Cache read/write counts are logged.
+    """
 
     def __init__(
         self,
@@ -51,15 +403,18 @@ class AnthropicLLM(LLM):
 
     @staticmethod
     def _estimate_tokens(
-        system: str, messages: List[Dict[str, str]], max_tokens: int
+        system: Any, messages: List[Dict[str, Any]], max_tokens: int
     ) -> int:
-        """Cheap pre-request token estimate (heuristic: 1 token ≈ 4 chars).
+        """Cheap pre-request token estimate (heuristic: 1 token ~= 4 chars).
 
-        We add *max_tokens* as a pessimistic upper bound for the reply so
-        the rate limiter reserves enough headroom for both prompt and
-        completion before the real numbers are known.
+        Handles both plain-string and structured-list system values.
+        Adds max_tokens as a pessimistic upper bound for the reply.
         """
-        total_chars = len(system)
+        if isinstance(system, str):
+            system_chars = len(system)
+        else:
+            system_chars = sum(len(b.get("text", "")) for b in system)
+        total_chars = system_chars
         for msg in messages:
             content = msg.get("content", "")
             total_chars += (
@@ -67,36 +422,65 @@ class AnthropicLLM(LLM):
             )
         return (total_chars // 4) + max_tokens
 
-    def call(self, system: str, messages: List[Dict[str, str]]) -> str:
-        """
-        Call the Anthropic Claude API and return the response text.
-        Raises provider-specific exceptions; callers should handle them.
+    @staticmethod
+    def _needs_caching_beta(
+        system: Any, messages: List[Dict[str, Any]]
+    ) -> bool:
+        """Return True if any content block carries a cache_control marker."""
+        if isinstance(system, list):
+            if any("cache_control" in b for b in system):
+                return True
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                if any("cache_control" in b for b in content):
+                    return True
+        return False
 
-        Rate limiting: before each API call the method blocks via
-        ``_rate_limiter.wait_for_capacity()`` until the rolling 60-second
-        token window has enough headroom.  After the call the reservation is
-        corrected with the actual token counts reported by the API.
+    def call(self, system: Any, messages: List[Dict[str, Any]]) -> str:
+        """Call the Anthropic Claude API and return the response text.
+
+        Args:
+            system:   Plain system-prompt string or a list of content blocks
+                      (possibly with cache_control markers from SessionHeader).
+            messages: Conversation history (user/assistant turns), also
+                      possibly containing cache_control blocks.
+
+        Rate limiting: blocks via _rate_limiter.wait_for_capacity() before
+        each call and corrects the reservation with actual token counts after.
+
+        Prompt caching: when system or any message content block carries a
+        cache_control marker, the prompt-caching-2024-07-31 beta header is
+        added automatically and cache statistics are logged.
         """
         if LOG_CONVERSATIONS:
             logger.info(f"Sending {len(messages)} messages to LLM (model={self.model})")
             if DEBUG_MODE:
                 logger.debug(f"Messages: {json.dumps(messages, indent=2)}")
 
-        # --- Rate limiting: reserve capacity before hitting the API -------
         estimated = self._estimate_tokens(system, messages, self.max_tokens)
         logger.debug(f"Estimated token cost for this request: {estimated}")
         reservation_id = _rate_limiter.wait_for_capacity(estimated)
-        # ------------------------------------------------------------------
 
         start_time = time.time()
 
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            system=system,
-            messages=messages,
-            timeout=self.timeout,
-        )
+        if self._needs_caching_beta(system, messages):
+            response = self.client.beta.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                system=system,
+                messages=messages,
+                timeout=self.timeout,
+                betas=["prompt-caching-2024-07-31"],
+            )
+        else:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                system=system,
+                messages=messages,
+                timeout=self.timeout,
+            )
 
         elapsed = time.time() - start_time
         response_text = response.content[0].text
@@ -104,15 +488,18 @@ class AnthropicLLM(LLM):
         output_tokens = response.usage.output_tokens if response.usage else 0
         actual_tokens = input_tokens + output_tokens
 
-        # --- Rate limiting: correct the optimistic reservation ------------
         _rate_limiter.record_actual(reservation_id, actual_tokens)
-        # ------------------------------------------------------------------
 
         if LOG_CONVERSATIONS:
+            cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
+            cache_write = getattr(response.usage, "cache_creation_input_tokens", 0) or 0
+            cache_info = ""
+            if cache_read or cache_write:
+                cache_info = f" | cache_read={cache_read} cache_write={cache_write}"
             logger.info(
                 f"Received response ({len(response_text)} chars) in {elapsed:.2f}s "
                 f"| tokens: {input_tokens} in / {output_tokens} out "
-                f"(total: {actual_tokens}) | {_rate_limiter.status()}"
+                f"(total: {actual_tokens}){cache_info} | {_rate_limiter.status()}"
             )
             if DEBUG_MODE:
                 logger.debug(f"Response: {response_text}")
@@ -120,51 +507,31 @@ class AnthropicLLM(LLM):
         return response_text
 
 
-import os
-
-
 def _build_llm() -> LLM:
-    """
-    Instantiate the LLM provider selected by the ``LLM_PROVIDER`` env var.
+    """Instantiate the LLM provider selected by the LLM_PROVIDER env var.
 
-    ``"anthropic"`` (default)
-        Uses :class:`AnthropicLLM` with the Anthropic SDK.
-        Requires ``ANTHROPIC_API_KEY``.
-
-    ``"openai"``
-        Uses :class:`~utils.openai_llm.OpenAILLM` — connects to any
-        OpenAI-compatible HTTP endpoint (Ollama, LM Studio, vLLM, OpenAI,
-        Groq, …).  Requires ``OPENAI_BASE_URL``, ``OPENAI_API_KEY``,
-        ``OPENAI_MODEL`` in ``.env``.
+    'anthropic' (default): AnthropicLLM. Requires ANTHROPIC_API_KEY.
+    'openai': OpenAILLM - any OpenAI-compatible endpoint (Ollama, etc.).
+              Requires OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL in .env.
     """
-    from utils.config import LLM_PROVIDER  # late import avoids circular deps
+    from utils.config import LLM_PROVIDER
 
     if LLM_PROVIDER == "openai":
         from utils.openai_llm import OpenAILLM
         from utils.config import (
-            OPENAI_BASE_URL,
-            OPENAI_API_KEY,
-            OPENAI_MODEL,
-            OPENAI_MAX_TOKENS,
-            OPENAI_TEMPERATURE,
-            OPENAI_TIMEOUT,
-            OPENAI_MAX_RETRIES,
+            OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL,
+            OPENAI_MAX_TOKENS, OPENAI_TEMPERATURE, OPENAI_TIMEOUT, OPENAI_MAX_RETRIES,
         )
         logger.info(
             f"[LLM] Provider: openai-compatible  "
             f"url={OPENAI_BASE_URL}  model={OPENAI_MODEL}"
         )
         return OpenAILLM(
-            base_url=OPENAI_BASE_URL,
-            api_key=OPENAI_API_KEY,
-            model=OPENAI_MODEL,
-            max_tokens=OPENAI_MAX_TOKENS,
-            temperature=OPENAI_TEMPERATURE,
-            timeout=OPENAI_TIMEOUT,
-            max_retries=OPENAI_MAX_RETRIES,
+            base_url=OPENAI_BASE_URL, api_key=OPENAI_API_KEY, model=OPENAI_MODEL,
+            max_tokens=OPENAI_MAX_TOKENS, temperature=OPENAI_TEMPERATURE,
+            timeout=OPENAI_TIMEOUT, max_retries=OPENAI_MAX_RETRIES,
         )
 
-    # Default: Anthropic
     logger.info(f"[LLM] Provider: anthropic  model={os.environ.get('NTCODE_MODEL', DEFAULT_MODEL)}")
     return AnthropicLLM(
         api_key=os.environ["ANTHROPIC_API_KEY"],
@@ -172,9 +539,7 @@ def _build_llm() -> LLM:
     )
 
 
-# Active LLM instance used throughout the application.
-# Swap provider by setting LLM_PROVIDER in .env — no code changes needed.
-# Can also be replaced at runtime via switch_provider().
+# Active LLM instance. Swap via LLM_PROVIDER env var or switch_provider().
 llm: LLM = _build_llm()
 
 
@@ -182,12 +547,11 @@ llm: LLM = _build_llm()
 # Runtime provider switching
 # ---------------------------------------------------------------------------
 
-# Maps short alias -> canonical backend name
 _PROVIDER_ALIASES = {
     "anthropic": "anthropic",
     "claude": "anthropic",
     "openai": "openai",
-    "ollama": "openai",   # Ollama speaks the OpenAI wire protocol
+    "ollama": "openai",
     "groq": "openai",
     "lmstudio": "openai",
 }
@@ -206,22 +570,16 @@ def current_provider_name() -> str:
 
 
 def switch_provider(spec: str) -> str:
-    """Replace the active ``llm`` instance with a new provider.
+    """Replace the active llm instance with a new provider.
 
-    *spec* can be:
+    spec: bare alias ('openai', 'anthropic', 'ollama' ...) or alias/model
+    ('openai/gpt-4o', 'ollama/llama3', 'anthropic/claude-opus-4-5').
 
-    * A bare alias:  ``"openai"``, ``"anthropic"``, ``"ollama"`` …
-      Uses the same env-var settings as startup.
-    * An alias with a model override:  ``"openai/gpt-4o"``, ``"ollama/llama3"``
-      Overrides only the model; all other settings come from env vars.
-    * ``"anthropic/claude-opus-4-5"`` — same pattern for Anthropic.
-
-    Returns a human-readable status string.
-    Raises ``ValueError`` for unknown aliases or missing credentials.
+    Returns a status string.  Raises ValueError for unknown aliases or
+    missing credentials.
     """
     global llm
 
-    # Parse optional model override
     if "/" in spec:
         alias, model_override = spec.split("/", 1)
         model_override = model_override.strip()
@@ -240,20 +598,12 @@ def switch_provider(spec: str) -> str:
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY is not set in the environment.")
         model = model_override or os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
-        new_llm: LLM = AnthropicLLM(
-            api_key=api_key,
-            model=model,
-        )
-    else:  # openai-compatible
+        new_llm: LLM = AnthropicLLM(api_key=api_key, model=model)
+    else:
         from utils.openai_llm import OpenAILLM
         from utils.config import (
-            OPENAI_BASE_URL,
-            OPENAI_API_KEY,
-            OPENAI_MODEL,
-            OPENAI_MAX_TOKENS,
-            OPENAI_TEMPERATURE,
-            OPENAI_TIMEOUT,
-            OPENAI_MAX_RETRIES,
+            OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL,
+            OPENAI_MAX_TOKENS, OPENAI_TEMPERATURE, OPENAI_TIMEOUT, OPENAI_MAX_RETRIES,
         )
         _DEFAULT_URLS: dict[str, str] = {
             "ollama": "http://localhost:11434/v1",
@@ -264,13 +614,9 @@ def switch_provider(spec: str) -> str:
         base_url = OPENAI_BASE_URL or _DEFAULT_URLS.get(alias, "http://localhost:11434/v1")
         model = model_override or OPENAI_MODEL
         new_llm = OpenAILLM(
-            base_url=base_url,
-            api_key=OPENAI_API_KEY,
-            model=model,
-            max_tokens=OPENAI_MAX_TOKENS,
-            temperature=OPENAI_TEMPERATURE,
-            timeout=OPENAI_TIMEOUT,
-            max_retries=OPENAI_MAX_RETRIES,
+            base_url=base_url, api_key=OPENAI_API_KEY, model=model,
+            max_tokens=OPENAI_MAX_TOKENS, temperature=OPENAI_TEMPERATURE,
+            timeout=OPENAI_TIMEOUT, max_retries=OPENAI_MAX_RETRIES,
         )
 
     llm = new_llm
@@ -279,25 +625,47 @@ def switch_provider(spec: str) -> str:
     return f"\u2705 Switched to {desc}"
 
 
-def execute_llm_call(conversation: List[Dict[str, str]]) -> str:
-    """Prepare the conversation and delegate to the active LLM provider."""
-    system_content = ""
-    messages = []
-    for msg in conversation:
-        if msg["role"] == "system":
-            system_content = msg["content"]
-        else:
-            messages.append(msg)
+def execute_llm_call(
+    conversation: List[Dict[str, Any]],
+    system_override: Any = None,
+    messages_override: List[Dict[str, Any]] = None,
+) -> str:
+    """Prepare the conversation and delegate to the active LLM provider.
 
-    # Conversation pruning is handled in run_coding_agent_loop() before this call.
+    Two calling conventions are supported:
+
+    Legacy (backward compatible):
+        Pass conversation as a flat list including a
+        {"role": "system", "content": str} entry.  The system message is
+        extracted and passed as a plain string to llm.call().
+
+    Cache-aware (used by ConversationManager):
+        Pass system_override (list[dict] from ConversationManager.
+        system_for_api()) and messages_override (list[dict] from
+        ConversationManager.messages_for_api()).  The conversation argument
+        is ignored when both overrides are provided.  This path sends
+        cache_control markers to Claude, activating prompt caching for the
+        session header.
+    """
+    if system_override is not None and messages_override is not None:
+        system: Any = system_override
+        messages: List[Dict[str, Any]] = messages_override
+    else:
+        system = ""
+        messages = []
+        for msg in conversation:
+            if msg["role"] == "system":
+                system = msg["content"]
+            else:
+                messages.append(msg)
 
     try:
-        return llm.call(system_content, messages)
+        return llm.call(system, messages)
     except anthropic.APITimeoutError as e:
         logger.error(f"API timeout error: {str(e)}")
         return (
-            "\u23f1\ufe0f Request timed out. The conversation may be too long or the request too "
-            "complex. Try:\n- Breaking your request into smaller parts\n"
+            "\u23f1\ufe0f Request timed out. The conversation may be too long or the "
+            "request too complex. Try:\n- Breaking your request into smaller parts\n"
             "- Starting a fresh conversation\n- Reducing the amount of context"
         )
     except anthropic.RateLimitError as e:

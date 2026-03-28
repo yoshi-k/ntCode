@@ -11,9 +11,11 @@ with `ntCode.py` as a thin entry-point shim.
 | File | Description |
 |------|-------------|
 | `ntCode.py` | Entry-point shim. Loads `.env`, then imports and calls `run_coding_agent_loop()` from `frontend/agent_loop.py`. Kept so that `python ntCode.py` continues to work. |
-| `outline.md` | Living project document: ideas, architecture notes, usage instructions, environment-variable reference, known bugs, TODO list, and implementation-status tracking. The primary place to capture decisions and future work. |
+| `agent.md` | **Start here** — high-level project orientation for agents and new contributors. Links to all key documents and explains the architecture in one sentence. |
+| `outline.md` | Strategy, architecture vision, planned features, and implementation-status summary. The place to capture decisions and future direction. |
+| `bugs.md` | Known bugs with diagnostic analysis, likely root causes, and next immediate actions. Check before starting any work. |
 | `decouplingStrategy.md` | Step-by-step refactoring plan used to break the original monolith apart. Describes the target directory layout, the ten extraction steps, dependency rules, and key gotchas. Now largely complete but kept as architectural reference. |
-| `README.md` | User-facing documentation: quick-start, configuration table, execution modes, available tools, security features, usage examples, and roadmap. |
+| `README.md` | Full usage guide: quick-start, configuration, execution modes, available tools, security features, usage examples, and known issues. The authoritative reference for running and using ntCode. |
 | `requirements.txt` | Python package dependencies (anthropic, python-dotenv, etc.). |
 | `.env.example` | Template showing all supported environment variables with example values. Copy to `.env` and fill in `ANTHROPIC_API_KEY` before running. |
 | `ntcode.log` | Runtime log file written by the application (git-ignored). Contains conversation history, tool executions, API timing, and token-usage data. |

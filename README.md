@@ -4,6 +4,8 @@ An AI-powered coding assistant that integrates with Claude AI to provide secure 
 
 > Originally inspired by ["The Emperor Has No Clothes: How to Code Claude Code in 200 Lines of Code"](https://www.mihaileric.com/The-Emperor-Has-No-Clothes/) by Mihail Eric. Adapted and extended by Joerg Kulbartz (joerg@kulbartz.de).
 
+> **Key docs:** [`agent.md`](agent.md) — orientation for agents/contributors · [`outline.md`](outline.md) — strategy & roadmap · [`bugs.md`](bugs.md) — known issues · [`file_organization.md`](file_organization.md) — code map
+
 ---
 
 ## 🚀 Features
@@ -164,9 +166,12 @@ You: Show git status, then stage and commit all modified files with a good messa
 
 ## 🐛 Known Issues
 
-1. **API timeouts on very long requests** — Handled gracefully; user sees a friendly message and can retry
-2. **Malformed JSON in tool calls** — Logged and skipped; does not crash the application
-3. **Large individual messages** — Conversation is pruned at 50 messages (`MAX_CONVERSATION_LENGTH`), but single very large messages can still approach token limits
+See [`bugs.md`](bugs.md) for full details and diagnostic analysis of each issue.
+
+1. **Malformed JSON in tool calls** — Can crash the application; fix in progress (highest priority).
+2. **API timeouts on very long requests** — Largely handled gracefully, but some timeout paths lack root-cause logging.
+3. **Claude duplicates tool-use documentation** — Claude occasionally re-narrates tool invocations; under investigation.
+4. **Large individual messages** — Conversation is pruned at `MAX_CONVERSATION_LENGTH` messages, but a single very large message can still approach token limits.
 
 ---
 

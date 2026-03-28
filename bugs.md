@@ -21,7 +21,7 @@ This document tracks active bugs and their diagnostic analysis. Check here befor
 
 ### 2. Timeout logging gaps
 - [ ] **Symptom**: When a request times out, no root cause appears in the logs — only a generic timeout message.
-- **Current evidence**: `run_git_command()` has a 30-second timeout; Anthropic API calls have timeout support in `AnthropicLLM.call()`, but the elapsed time and request size are not always logged before the exception propagates.
+- **Current evidence**: Anthropic API calls have timeout support in `AnthropicLLM.call()`, but elapsed time and request size are not always logged before the exception propagates.
 - **Diagnostic needs**:
   - Log conversation history size (token estimate) immediately before every API call.
   - Log elapsed time even when the call raises an exception.
@@ -34,8 +34,8 @@ This document tracks active bugs and their diagnostic analysis. Check here befor
 
 ## Resolved Bugs
 
-- ✅ **Malformed JSON crashes the application** — `extract_tool_invocations()` in `utils/agent.py` now catches `json.JSONDecodeError` specifically (was bare `except Exception`), logs the bad payload at WARNING level with the parse error, and skips the invocation rather than crashing.
-- ✅ **`test_api_key.py` uses wrong hard-coded model** — Now imports `MODEL_NAME` from `utils.config` (reads `NTCODE_MODEL` env var, defaults to `claude-sonnet-4-5`) and prints the model being tested. No more hard-coded `claude-opus-4-5`.
+- ✅ **Malformed JSON crashes the application** — `extract_tool_invocations()` in `utils/agent.py` uses `except json.JSONDecodeError` (not bare `except Exception`) and logs bad payloads at WARNING level with the parse error included. Agent never crashes on malformed LLM output.
+- ✅ **`test_api_key.py` hard-coded model and interactive prompt** — Now reads `ANTHROPIC_API_KEY` from environment/`.env` (no interactive prompt), and uses `DEFAULT_MODEL` from `utils/config.py` overridable via `NTCODE_MODEL` env var. Prints the model under test before the API call.
 - ✅ **API timeout handling** — `AnthropicLLM.call()` includes timeout support; `execute_llm_call()` catches and humanises timeout exceptions.
 - ✅ **Conversation memory leak** — `agent.py` prunes conversation history via `_prune_conversation()` (cap: `MAX_CONVERSATION_LENGTH`).
 - ✅ **Debug `input()` pauses in agent loop** — Removed after frontend/agent split.
@@ -46,5 +46,5 @@ This document tracks active bugs and their diagnostic analysis. Check here befor
 
 ## Next Immediate Actions
 
-1. **Improve error messages in tools** — Replace generic `Exception` text in tool files with user-friendly, actionable messages (distinguish "file not found" vs "permission denied" vs "file too large").
-2. **Investigate tool-use duplication** *(Bug #1 above)* — Add wire-level request/response logging to identify whether the system prompt or the parser is the root cause.
+1. **Investigate tool-use duplication** *(Bug #1 above)* — Add wire-level request/response logging to identify whether the system prompt or the parser is the root cause.
+2. **Improve error messages in tools** — Replace generic `Exception` text in tool files with user-friendly, actionable messages (distinguish "file not found" vs "permission denied" vs "file too large").

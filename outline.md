@@ -4,32 +4,41 @@ ntCoder is a exploration of ai coder written by vibecoding. The original impleme
 > https://www.mihaileric.com/The-Emperor-Has-No-Clothes/ 
 and copied from there by Joerg Kulbartz joerg@kulbartz.de 
 
-## Restart
-Save conversation to file, such that one can restart a new version of ntCoder
+## Cache and fine grained rollbacks
+Use the save conversation feature to have a good reset point. In addition cache conversations for todo. For example have SYSTEM_PROMPT + outline.md cahced on the server.
 
-Reset conversation from a clean cached version. Just systemprompt. 
+## Todo lists
+Have a todolist in a file, such that the agent can work through the first one, then reset to a cache point and work on the next todo item. To reset implement the fine grained controls first.
+
+## Batch mode
+for testing have a modus where ntCode reads input from a file, and then works deterministically through a list of tasks. 
+
+##  Skills
+Specific system prompt (together with model endpoints) and sets of tools for 
 ## Tests
 System needs ability to conduct test before git.
 (Or perhaps tests and test of test coverage as git action.) 
 
 ## Environment
 Should automatically backup and have restricted priviledges
+Perhaps add a 
 
 ## Workflow ideas
 Issue Tracker -> ntCoder.py -> git -> CI 
 At first issue tracker probably just .org or .md file 
 later real issue tracker 
 
-## Architecture
+
+# Architecture
 Front-end Middleware Backend architecture
 
-### Frontend to display messages and handle all ui. 
+## Frontend to display messages and handle all ui. 
 Chat with llm, help, query of logs and backend message flow
 - ✅ **DONE**: `frontend/agent_loop.py` is now a pure TUI shell (`input`/`print` only).
   It starts `run_agent()` in a background thread and communicates exclusively through
   the `Connector` class. No LLM or tool code remains in the frontend.
 
-### Middleware to route messages to tools and to communicate with the llm 
+## Middleware to route messages to tools and to communicate with the llm 
 Needs to handle tool implementation
 Logs interactions, and all messages send and received.
 - ✅ **DONE**: `utils/agent.py` contains the pure agent loop (conversation history,
@@ -39,7 +48,7 @@ Logs interactions, and all messages send and received.
   (no busy-wait). Supports `shutdown()` for clean teardown.
   `frontend/connector.py` is a backward-compat re-export shim (imports from `utils.connector`).
 
-### Backend 
+## Backend 
 Tools, in particular a good mcp abstraction
 LLMs abstracted for different providers
 - ✅ **DONE**: Minimal LLM provider abstraction implemented
@@ -51,7 +60,7 @@ LLMs abstracted for different providers
 
 
 
-#### Tools
+### Tools
 - git Integration, commit, commit messages, 
 write good diffs to understand what the coder did
 

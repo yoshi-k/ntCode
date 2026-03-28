@@ -17,7 +17,7 @@ with `ntCode.py` as a thin entry-point shim.
 | `requirements.txt` | Python package dependencies (anthropic, python-dotenv, etc.). |
 | `.env.example` | Template showing all supported environment variables with example values. Copy to `.env` and fill in `ANTHROPIC_API_KEY` before running. |
 | `ntcode.log` | Runtime log file written by the application (git-ignored). Contains conversation history, tool executions, API timing, and token-usage data. |
-| `start_qwen.sh` | Shell script to start a local Qwen model server. Used when running ntCode against a local LLM instead of the Anthropic API. |
+| `start_qwen.sh` | Shell script to run ntCode against a local Qwen model. Sets `LLM_PROVIDER=openai` and the `OPENAI_*` variables to route via `OpenAILLM` to a llama.cpp server on `nt-angband.local`. Use instead of the default Anthropic backend when running against a local model. |
 | `instruct1.txt` | Ad-hoc instruction file containing a short user prompt (e.g. a task to run on startup). Not part of the main application — used for one-off experiments and manual testing. |
 | `out1.json` / `out2.json` | Ephemeral JSON output files produced during development and experiments (git-ignored via `out*.json`). Not part of the main application. |
 | `test_api_key.py` | Standalone script that smoke-tests the Anthropic API key and model name configured in `.env`. |

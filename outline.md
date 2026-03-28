@@ -129,8 +129,12 @@ NTCODE_LOG_CONVERSATIONS=false python ntCode.py
 | `NTCODE_DEBUG` | true/false | false | Enable detailed debugging and logging |
 | `NTCODE_VERBOSE` | true/false | false | Enable interactive tool approval |
 | `NTCODE_LOG_CONVERSATIONS` | true/false | true | Enable conversation logging to file |
-| `ANTHROPIC_API_KEY` | string | required | Your Anthropic API key |
+| `ANTHROPIC_API_KEY` | string | required (Anthropic) | Your Anthropic API key. Not needed when using `LLM_PROVIDER=openai`. |
 | `NTCODE_TOKEN_LIMIT_PER_MINUTE` | integer | 30000 | Max tokens consumed per 60-second sliding window |
+| `LLM_PROVIDER` | `anthropic` / `openai` | `anthropic` | Select the LLM backend. Set to `openai` to route via `OpenAILLM` (e.g. to a local llama.cpp server). |
+| `OPENAI_API_KEY` | string | required if openai | API key for the OpenAI-compatible endpoint. |
+| `OPENAI_BASE_URL` | URL | — | Base URL of the OpenAI-compatible server (e.g. `http://nt-angband.local:8080/v1`). |
+| `OPENAI_MODEL` | string | — | Model name to request from the OpenAI-compatible endpoint. |
 
 ## Log Files
 
@@ -240,29 +244,29 @@ The code implements robust security measures including path validation, director
 
 ### 1. Bug Fixes & Stability
 - [ ] **Fix JSON parsing crashes** - Add robust error handling for malformed JSON in `extract_tool_invocations()`
-- [ ] **Add API timeout handling** - Implement timeout handling in `execute_llm_call()` function
-- [ ] **Fix conversation memory leak** - Implement conversation history pruning to prevent infinite growth
-- [ ] **Remove debug code** - Clean up debug prints and "Wait" input prompts in main loop
+- [x] **Add API timeout handling** - ✅ `AnthropicLLM` makes the Anthropic API request with timeout support; `execute_llm_call()` catches and humanises timeout exceptions.
+- [x] **Fix conversation memory leak** - ✅ `agent.py` prunes conversation history via `_prune_conversation()`.
+- [x] **Remove debug code** - ✅ Refactor separated TUI from agent; no debug `input()` pauses remain in the agent loop.
 
 ### 2. Configuration & Environment
-- [ ] **Create .env.example file** - Document required environment variables
-- [ ] **Add model configuration** - Make Claude model name configurable instead of hard-coded
-- [ ] **Implement proper logging levels** - Replace print statements with proper logging
+- [x] **Create .env.example file** - ✅ `.env.example` exists with all supported environment variables.
+- [x] **Add model configuration** - ✅ `config.py` reads model name and all `NTCODE_*` settings from environment variables.
+- [x] **Implement proper logging levels** - ✅ `config.py` configures the `logging` framework with console and file handlers; no bare `print()` statements in agent or tool code.
 - [ ] **Add requirements.txt validation** - Ensure all dependencies are properly listed
 
 ### 3. Code Quality
-- [ ] **Refactor tool execution logic** - Replace the large if-elif chain with dynamic parameter mapping
-- [ ] **Add type validation** - Validate tool parameters before execution
-- [ ] **Extract constants** - Move magic numbers and strings to configuration section
-- [ ] **Split large functions** - Break down `run_coding_agent_loop()` into smaller functions
+- [x] **Refactor tool execution logic** - ✅ `registry.py` `execute_tool_safely()` introspects signatures and fills defaults dynamically; no if-elif chain.
+- [x] **Add type validation** - ✅ `execute_tool_safely()` validates parameters before execution.
+- [x] **Extract constants** - ✅ All constants and magic values centralised in `config.py`.
+- [x] **Split large functions** - ✅ `run_coding_agent_loop()` is now a thin TUI shell; agent logic lives in `utils/agent.py`.
 
 ## MEDIUM PRIORITY TODOs
 
 ### 4. Testing & Documentation
-- [ ] **Create comprehensive README** - Write proper documentation for setup and usage
-- [ ] **Add unit tests** - Create test suite in the empty `tests/` directory
-- [ ] **Document all environment variables** - Complete the environment variable documentation
-- [ ] **Add API documentation** - Document all available tools and their parameters
+- [x] **Create comprehensive README** - ✅ `README.md` covers quick-start, configuration, execution modes, tools, security, and roadmap.
+- [x] **Add unit tests** - ✅ `tests/` contains `test_security.py`, `test_basic.py`, and `test_extract_tool_invocations.py`.
+- [x] **Document all environment variables** - ✅ Environment variable table in Usage section above; also in `README.md`.
+- [x] **Add API documentation** - ✅ All tools documented in `file_organization.md` and advertised via `get_tool_str_representation()` in `registry.py`.
 
 ### 5. Features & UX
 - [ ] **Add help command** - Implement user help system for available commands
@@ -291,9 +295,9 @@ The code implements robust security measures including path validation, director
 - [ ] **Research capabilities** - Add internet research tools
 
 ## QUICK WINS (Can be done immediately)
-- [ ] **Fix the empty tests directory** - Add basic test structure
+- [x] **Fix the empty tests directory** - ✅ Three test files now exist in `tests/`.
 - [ ] **Update the API key test** - Fix the model name in `test_api_key.py` (uses wrong model)
-- [ ] **Clean up debug output** - Remove the `input("Wait")` line that pauses execution
+- [x] **Clean up debug output** - ✅ Agent/tool refactor removed all `input("Wait")` pauses.
 - [ ] **Add proper error messages** - Replace generic errors with user-friendly messages
 
 ## IMPLEMENTATION STATUS
@@ -308,11 +312,11 @@ The code implements robust security measures including path validation, director
 - **Token Rate Limiting**: ✅ **DONE** - `TokenRateLimiter` enforces 30 000 tokens/min sliding window; integrated into `AnthropicLLM.call()`; configurable via `NTCODE_TOKEN_LIMIT_PER_MINUTE`
 
 ### 🔧 Current Implementation Issues
-1. **JSON Parsing**: Tool invocation parsing can crash on malformed JSON
-2. **API Timeouts**: No timeout handling for Anthropic API calls
-3. **Memory Management**: Conversation history grows without bounds
-4. **Debug Code**: Unnecessary debug prints and input pauses remain
-5. **Hard-coded Configuration**: Model name and limits are not configurable
+1. **JSON Parsing**: Tool invocation parsing can crash on malformed JSON — still open.
+2. ~~**API Timeouts**: No timeout handling for Anthropic API calls~~ — ✅ resolved.
+3. ~~**Memory Management**: Conversation history grows without bounds~~ — ✅ resolved via `_prune_conversation()`.
+4. ~~**Debug Code**: Unnecessary debug prints and input pauses remain~~ — ✅ resolved.
+5. ~~**Hard-coded Configuration**: Model name and limits are not configurable~~ — ✅ resolved via `config.py`.
 
 ## DEVELOPMENT PHASES
 

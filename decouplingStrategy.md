@@ -1,6 +1,12 @@
-#Decoupling
+# Decoupling Strategy
 
-The idea is to seperate the app ntCode.py into three parts,
+> **Status: Complete.** All ten extraction steps have been carried out. The final
+> directory layout differs slightly from the plan below — `backend/` became `utils/`,
+> and `backend/tools/` became the top-level `tools/` directory — but all the logic
+> described here was extracted as planned. This document is kept as architectural
+> reference and is useful for understanding *why* the code is structured the way it is.
+
+The idea is to separate the app ntCode.py into three parts,
 
 Front end, for now a tui app
 Middleware handles the tools 

@@ -343,11 +343,9 @@ The code implements robust security measures including path validation, director
 - Add advanced git features
 
 ## NEXT IMMEDIATE ACTIONS
-1. **Fix debug code**: Remove `input("Wait")` line that blocks execution
-2. **Update API test**: Fix model name in `test_api_key.py`
-3. **Add basic tests**: Create initial test structure in `tests/` directory
-4. **Create .env.example**: Document required environment variables
-5. **Add error recovery**: Implement robust JSON parsing with fallbacks
+1. **Fix JSON parsing crashes** — Add robust error handling around `json.loads()` in `extract_tool_invocations()` so malformed LLM responses are logged and skipped rather than crashing the agent. See *Current bugs § 3* above for the vulnerable code location.
+2. **Update `test_api_key.py`** — Fix the hard-coded model name; it uses the wrong model string and will fail against the current Anthropic API.
+3. **Add proper error messages** — Replace generic `Exception` messages in tools with user-friendly, actionable text (e.g. distinguish "file not found" from "permission denied" from "file too large").
 
 ## PROJECT VISION
 

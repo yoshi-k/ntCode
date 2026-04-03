@@ -9,17 +9,49 @@
 #
 #   utils/      - config, rate_limiter, security, llm
 #   tools/      - one file per tool + registry
-#   frontend/   - connector, agent_loop
+#   frontend/   - connector, agent_loop, batch_loop, common
 #
 # This file is kept for backward compatibility: `python ntCode.py` still works.
+#
+# Usage:
+#   python ntCode.py                              # interactive TUI
+#   python ntCode.py --batch infile.txt           # batch mode (output to stdout-like default)
+#   python ntCode.py --batch infile.txt --out outfile.txt  # batch mode with output file
 # ---------------------------------------------------------------------------
+
+import argparse
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from frontend.agent_loop import run_coding_agent_loop  # noqa: E402
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="ntCode",
+        description="ntCode AI coding assistant",
+    )
+    parser.add_argument(
+        "--batch",
+        metavar="INFILE",
+        default=None,
+        help="Run in batch mode: read instructions from INFILE (one per line).",
+    )
+    parser.add_argument(
+        "--out",
+        metavar="OUTFILE",
+        default="batch_output.txt",
+        help="Output file for batch mode (default: batch_output.txt).",
+    )
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
-    run_coding_agent_loop()
+    args = _parse_args()
+
+    if args.batch:
+        from frontend.batch_loop import run_batch_loop  # noqa: E402
+        run_batch_loop(args.batch, args.out)
+    else:
+        from frontend.agent_loop import run_coding_agent_loop  # noqa: E402
+        run_coding_agent_loop()

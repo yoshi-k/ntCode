@@ -88,6 +88,10 @@ class OpenAILLM(LLM):
         max_retries: int = 3,
         retry_delay: float = 1.0,
     ) -> None:
+        if max_retries < 1:
+            raise ValueError(
+                f"[OpenAILLM] max_retries must be >= 1, got {max_retries}"
+            )
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.max_tokens = max_tokens          # 0 = omit from request
@@ -171,12 +175,61 @@ class OpenAILLM(LLM):
             )
         return max(1, total_chars // 4)
 
-    def _build_payload(self, system: str, messages: List[Dict[str, str]]) -> dict:
-        """Assemble the JSON body for /chat/completions."""
+    @staticmethod
+    def _flatten_content(content: "str | list") -> str:
+        """Reduce a content value to a plain string.
+
+        Anthropic-style content blocks (list of dicts with a ``type`` key)
+        are joined by concatenating all ``text`` block values.  Cache-control
+        markers and other non-text block types are silently dropped because
+        OpenAI-compatible endpoints only accept plain strings in the
+        ``content`` field.
+
+        Args:
+            content: Either a plain string or a list of content-block dicts
+                     (as produced by ConversationManager.messages_for_api()).
+
+        Returns:
+            A single plain string suitable for the OpenAI ``content`` field.
+        """
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = [
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            ]
+            return "\n".join(parts)
+        # Fallback for any other unexpected type
+        return str(content)
+
+    def _build_payload(self, system: "str | list", messages: List[Dict[str, Any]]) -> dict:
+        """Assemble the JSON body for /chat/completions.
+
+        Handles both plain-string and structured-list content values so that
+        messages produced by ConversationManager (which may carry
+        cache_control blocks) are flattened to plain strings before being
+        sent to the OpenAI-compatible endpoint.
+
+        Raises:
+            ValueError: If a message is missing the required ``role`` key.
+        """
+        # Flatten system prompt in case it is a list of content blocks
+        system_str = self._flatten_content(system)
+
         # OpenAI spec: system role sits at index 0
-        openai_messages = [{"role": "system", "content": system}] + [
-            {"role": m["role"], "content": m["content"]} for m in messages
-        ]
+        openai_messages: List[Dict[str, Any]] = [{"role": "system", "content": system_str}]
+
+        for i, m in enumerate(messages):
+            if "role" not in m:
+                raise ValueError(
+                    f"[OpenAILLM] Message at index {i} is missing required 'role' key: {m!r}"
+                )
+            role = m["role"]
+            raw_content = m.get("content", "")
+            openai_messages.append({"role": role, "content": self._flatten_content(raw_content)})
+
         body: Dict[str, Any] = {
             "model": self.model,
             "messages": openai_messages,

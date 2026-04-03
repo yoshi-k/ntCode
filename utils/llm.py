@@ -15,6 +15,7 @@ always be written to disk without requiring subdirectory creation::
     from utils.llm import SessionHeader, ConversationManager
 """
 
+import copy
 import json
 import os
 import time
@@ -365,7 +366,7 @@ class ConversationManager:
         """
         if not name:
             raise ValueError("save_point name must not be empty")
-        self._save_points[name] = [dict(m) for m in self._task_messages]
+        self._save_points[name] = copy.deepcopy(self._task_messages)
         logger.info(
             "ConversationManager: save_point %r captured (%d messages)",
             name,
@@ -387,7 +388,7 @@ class ConversationManager:
         if name not in self._save_points:
             raise KeyError(f"No save point named {name!r}. "
                            f"Available: {sorted(self._save_points)}")
-        self._task_messages = [dict(m) for m in self._save_points[name]]
+        self._task_messages = copy.deepcopy(self._save_points[name])
         logger.info(
             "ConversationManager: restored to save_point %r (%d messages)",
             name,
@@ -685,6 +686,15 @@ def switch_provider(spec: str) -> str:
             timeout=OPENAI_TIMEOUT, max_retries=OPENAI_MAX_RETRIES,
         )
 
+    # Close the previous provider's connection pool if it supports it
+    # (OpenAILLM wraps an httpx.Client; AnthropicLLM has no close method).
+    if hasattr(llm, "close") and callable(llm.close):
+        try:
+            llm.close()
+            logger.info("[LLM] Previous provider closed successfully.")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[LLM] Error closing previous provider: %s", exc)
+
     llm = new_llm
     desc = current_provider_name()
     logger.info("[LLM] Provider switched to: %s", desc)
@@ -746,6 +756,51 @@ def execute_llm_call(
     except anthropic.APIError as e:
         logger.error(f"API error: {str(e)}")
         return f"\u274c Claude API error: {str(e)}"
+    # --- OpenAI-compatible / httpx errors (raised by OpenAILLM) ----------
+    except PermissionError as e:
+        # Raised by OpenAILLM._raise_for_4xx for HTTP 401/403
+        logger.error("OpenAI authentication/permission error: %s", e)
+        return (
+            "\U0001f511 Authentication failed. "
+            "Please check your OPENAI_API_KEY / OPENAI_BASE_URL in your .env file.\n"
+            f"Detail: {e}"
+        )
+    except ValueError as e:
+        # Raised by OpenAILLM._raise_for_4xx for HTTP 404 (wrong model/URL)
+        logger.error("OpenAI request error (likely wrong model or base URL): %s", e)
+        return (
+            "\u274c Bad request to the OpenAI-compatible endpoint. "
+            "Check OPENAI_BASE_URL and OPENAI_MODEL in your .env file.\n"
+            f"Detail: {e}"
+        )
+    except RuntimeError as e:
+        # Raised by OpenAILLM for HTTP 429, 5xx, or exhausted retries
+        msg = str(e)
+        logger.error("OpenAI runtime error: %s", msg)
+        if "429" in msg or "Rate limited" in msg:
+            return "\U0001f6ab Rate limit exceeded by the remote server. Please wait a moment before trying again."
+        if "attempt" in msg and "failed" in msg:
+            return (
+                "\U0001f310 Failed to reach the OpenAI-compatible endpoint after "
+                "multiple retries. Please check the server is running and "
+                "OPENAI_BASE_URL is correct.\n"
+                f"Detail: {msg}"
+            )
+        return f"\u274c OpenAI-compatible endpoint error: {msg}"
     except Exception as e:
-        logger.error(f"LLM call failed: {str(e)}")
+        # httpx.TimeoutException, httpx.ConnectError, and anything else
+        exc_type = type(e).__name__
+        logger.error("LLM call failed (%s): %s", exc_type, e)
+        if "Timeout" in exc_type or "timeout" in str(e).lower():
+            return (
+                "\u23f1\ufe0f Request timed out connecting to the LLM endpoint. "
+                "Try:\n- Checking the server is reachable\n"
+                "- Increasing OPENAI_TIMEOUT in your .env file\n"
+                "- Breaking your request into smaller parts"
+            )
+        if "Connect" in exc_type or "connect" in str(e).lower():
+            return (
+                "\U0001f310 Failed to connect to the LLM endpoint. "
+                "Please check the server is running and your network connection."
+            )
         return f"\U0001f4a5 Unexpected error calling LLM: {str(e)}"

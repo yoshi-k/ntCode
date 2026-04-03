@@ -251,6 +251,7 @@ class ConversationManager:
     def __init__(self, session_header: SessionHeader) -> None:
         self.session_header: SessionHeader = session_header
         self._task_messages: list[dict[str, Any]] = []
+        self._save_points: dict[str, list[dict[str, Any]]] = {}
 
     def start_task(self, task_description: str = "") -> None:
         """Begin a new task, resetting the conversation to the cache point.
@@ -347,6 +348,71 @@ class ConversationManager:
                 self.add_user(text)
             else:
                 self.add_assistant(text)
+
+    # ------------------------------------------------------------------
+    # Named save points (in-memory rollback)
+    # ------------------------------------------------------------------
+
+    def save_point(self, name: str) -> None:
+        """Snapshot the current task context under *name*.
+
+        Stores a deep copy of the task-message list so that future mutations
+        do not affect the saved state.  Calling save_point() with the same
+        name overwrites the previous snapshot.
+
+        Args:
+            name: Arbitrary label for the save point (e.g. "before-refactor").
+        """
+        if not name:
+            raise ValueError("save_point name must not be empty")
+        self._save_points[name] = [dict(m) for m in self._task_messages]
+        logger.info(
+            "ConversationManager: save_point %r captured (%d messages)",
+            name,
+            len(self._task_messages),
+        )
+
+    def restore(self, name: str) -> None:
+        """Restore the task context to the snapshot stored under *name*.
+
+        The current task context is discarded and replaced with a deep copy
+        of the saved snapshot.  The session header is never affected.
+
+        Args:
+            name: Label used in the matching save_point() call.
+
+        Raises:
+            KeyError: If no save point with *name* exists.
+        """
+        if name not in self._save_points:
+            raise KeyError(f"No save point named {name!r}. "
+                           f"Available: {sorted(self._save_points)}")
+        self._task_messages = [dict(m) for m in self._save_points[name]]
+        logger.info(
+            "ConversationManager: restored to save_point %r (%d messages)",
+            name,
+            len(self._task_messages),
+        )
+
+    def delete_save_point(self, name: str) -> None:
+        """Remove a named save point, freeing its memory.
+
+        Args:
+            name: Label of the save point to delete.
+
+        Raises:
+            KeyError: If no save point with *name* exists.
+        """
+        if name not in self._save_points:
+            raise KeyError(f"No save point named {name!r}. "
+                           f"Available: {sorted(self._save_points)}")
+        del self._save_points[name]
+        logger.info("ConversationManager: deleted save_point %r", name)
+
+    @property
+    def save_point_names(self) -> list[str]:
+        """Sorted list of currently stored save point names."""
+        return sorted(self._save_points)
 
     @property
     def task_message_count(self) -> int:

@@ -48,3 +48,48 @@ This document tracks active bugs and their diagnostic analysis. Check here befor
 
 1. **Investigate tool-use duplication** *(Bug #1 above)* — Add wire-level request/response logging to identify whether the system prompt or the parser is the root cause.
 2. **Improve error messages in tools** — Replace generic `Exception` text in tool files with user-friendly, actionable messages (distinguish "file not found" vs "permission denied" vs "file too large").
+
+---
+
+## Test Gaps
+
+The following areas have no test coverage and need a `tests/test_conversation_manager.py`:
+
+### Prompt-caching helpers (`utils/llm.py`)
+- [ ] `apply_cache_control(block)` — returns new dict with `cache_control` key; original dict unmodified.
+- [ ] `mark_last_content_block(content)` — only the last block is cache-marked; all others unchanged.
+- [ ] `mark_last_content_block([])` — raises `ValueError` on empty list.
+
+### `SessionHeader`
+- [ ] `system_block()` — returns a one-element list; the block has `cache_control`.
+- [ ] `as_user_message()` — role is `"user"`; last content block has `cache_control`.
+- [ ] `as_assistant_ack()` — role is `"assistant"`; content is the expected ack string.
+- [ ] `as_message_pair()` — returns exactly two messages in the correct order.
+- [ ] `_load_docs()` — missing files are skipped with a warning, not raised.
+
+### `ConversationManager` — basic state
+- [ ] `add_user` / `add_assistant` — correct role and block structure appended.
+- [ ] `start_task()` — clears task messages; optional description added as first user turn.
+- [ ] `task_message_count` — reflects current length.
+- [ ] `messages_for_api()` — header pair always prepended before task messages.
+- [ ] `prune_task_messages(n)` — trims to `n`, keeps tail, never touches header.
+- [ ] `as_flat_conversation()` — strips block structure; correct role/content pairs.
+- [ ] `restore_from_flat()` — round-trips correctly: save → flat → restore → flat matches.
+
+### `ConversationManager` — named save points
+- [ ] `save_point(name)` captures current state; later mutations don't affect the snapshot.
+- [ ] `restore(name)` replaces task messages with the snapshot; message count matches.
+- [ ] Overwriting a save point with the same name reflects the newer state.
+- [ ] `restore` after further changes rolls back cleanly.
+- [ ] `delete_save_point(name)` removes the point; subsequent `restore` raises `KeyError`.
+- [ ] `save_point_names` returns sorted list of active names.
+- [ ] `save_point("")` raises `ValueError`.
+- [ ] `restore("nonexistent")` raises `KeyError`.
+- [ ] `delete_save_point("nonexistent")` raises `KeyError`.
+- [ ] Save point survives `prune_task_messages()` (save points not stored in task list).
+- [ ] Save point survives `start_task()` (save points are not cleared by reset).
+
+### `AnthropicLLM` (unit, no API calls)
+- [ ] `_needs_caching_beta()` — returns `True` when system list has `cache_control`.
+- [ ] `_needs_caching_beta()` — returns `True` when a message content block has `cache_control`.
+- [ ] `_needs_caching_beta()` — returns `False` when no markers present.

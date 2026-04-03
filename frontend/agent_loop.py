@@ -33,16 +33,19 @@ from utils.agent import run_agent
 
 _HELP_TEXT = """\
 Available commands:
-  /help                  Show this help message
-  /quit  or  /exit       Exit ntCode
-  /reset                 Clear conversation history (keep system prompt)
-  /save  [file]          Save conversation to file (default: saves/conversation-<timestamp>.json)
-  /load  [file]          Load conversation from file
-  /prompt                Show the current system prompt
-  /tools                 List available tools
-  /provider              Show the current LLM provider
-  /provider list         List all available provider aliases
-  /provider <alias>      Switch provider  (e.g. /provider ollama)
+  /help                      Show this help message
+  /quit  or  /exit           Exit ntCode
+  /reset                     Clear conversation history (keep system prompt)
+  /save  [file]              Save conversation to file (default: saves/conversation-<timestamp>.json)
+  /load  [file]              Load conversation from file
+  /savepoint <name>          Capture an in-memory save point (e.g. /savepoint before-refactor)
+  /restore   <name>          Roll back to a named save point
+  /savepoints                List all current in-memory save points
+  /prompt                    Show the current system prompt
+  /tools                     List available tools
+  /provider                  Show the current LLM provider
+  /provider list             List all available provider aliases
+  /provider <alias>          Switch provider  (e.g. /provider ollama)
   /provider <alias>/<model>  Switch provider and model  (e.g. /provider openai/gpt-4o)
 """
 
@@ -112,6 +115,18 @@ def _handle_slash_command(cmd: str, connector: Connector) -> bool:
 
     elif name == "/load":
         connector.send_control("load", arg or None)
+        _wait_and_print_reply(connector)
+
+    elif name == "/savepoint":
+        connector.send_control("savepoint", arg)
+        _wait_and_print_reply(connector)
+
+    elif name == "/restore":
+        connector.send_control("restore", arg)
+        _wait_and_print_reply(connector)
+
+    elif name == "/savepoints":
+        connector.send_control("savepoints")
         _wait_and_print_reply(connector)
 
     elif name == "/provider":

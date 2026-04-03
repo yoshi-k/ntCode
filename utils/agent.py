@@ -223,6 +223,59 @@ def _handle_control(
             path = str(candidates[-1])
         connector.send_assistant(_load_conversation(mgr, path))
 
+    elif command == "savepoint":
+        # payload is the save-point name
+        name = payload.strip()
+        if not name:
+            connector.send_assistant(
+                "\u274c Usage: /savepoint <name>"
+            )
+            return
+        try:
+            mgr.save_point(name)
+            count = mgr.task_message_count
+            connector.send_assistant(
+                f"\U0001f4cc Save point {name!r} captured ({count} messages)."
+            )
+        except ValueError as exc:
+            connector.send_assistant(f"\u274c {exc}")
+
+    elif command == "restore":
+        # payload is the save-point name
+        name = payload.strip()
+        if not name:
+            names = mgr.save_point_names
+            if names:
+                connector.send_assistant(
+                    f"\u274c Usage: /restore <name>. "
+                    f"Available save points: {', '.join(names)}"
+                )
+            else:
+                connector.send_assistant(
+                    "\u274c No save points exist yet. Use /savepoint <name> first."
+                )
+            return
+        try:
+            mgr.restore(name)
+            count = mgr.task_message_count
+            connector.send_assistant(
+                f"\u23ea Restored to save point {name!r} ({count} messages)."
+            )
+        except KeyError as exc:
+            connector.send_assistant(f"\u274c {exc}")
+
+    elif command == "savepoints":
+        # list all save points
+        names = mgr.save_point_names
+        if names:
+            connector.send_assistant(
+                "\U0001f4cc Save points: " + ", ".join(names)
+            )
+        else:
+            connector.send_assistant(
+                "No save points yet. Use /savepoint <name> to create one."
+            )
+
     else:
         connector.send_assistant(f"\u274c Unknown control command: {command!r}")
         logger.warning("Unknown control command: %s", command)

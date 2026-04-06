@@ -10,6 +10,7 @@ with `ntCode.py` as a thin entry-point shim.
 
 | File | Description |
 |------|-------------|
+| `system_prompt.md` | **System-prompt stub** — the editable source for the LLM system prompt. Contains the base prose instructions, `{{TOOLS}}` (replaced at runtime with formatted tool descriptions), and `{{FILE:path}}` directives (each replaced with the content of the named file). Edit this file to change what the model is told about its role, context files, or tool-use format. Loaded by `utils/prompt.py`; controlled by `NTCODE_SYSTEM_PROMPT_FILE`. |
 | `ntCode.py` | Entry-point shim. Loads `.env`, then imports and calls `run_coding_agent_loop()` from `frontend/agent_loop.py`. Kept so that `python ntCode.py` continues to work. |
 | `agent.md` | **Start here** — high-level project orientation for agents and new contributors. Links to all key documents and explains the architecture in one sentence. |
 | `outline.md` | Strategy, architecture vision, planned features, and implementation-status summary. The place to capture decisions and future direction. |
@@ -51,7 +52,7 @@ All tools import security and config helpers from `utils/`; none import from `fr
 | File | Description |
 |------|-------------|
 | `__init__.py` | Re-exports all eight `*_tool` symbols so other modules can import from `tools` as a single namespace. |
-| `registry.py` | Central tool registry and dispatcher. `TOOL_REGISTRY` maps tool names to their functions. `get_tool_str_representation()` and `get_full_system_prompt()` build the system-prompt text that advertises each tool (name, docstring, signature) to the LLM. `execute_tool_safely()` introspects each tool's signature, fills in defaults for missing parameters, and executes the call inside a try/except. `register_tool()` allows future dynamic registration. |
+| `registry.py` | Central tool registry and dispatcher. `TOOL_REGISTRY` maps tool names to their functions. `get_tool_str_representation()` formats one tool's name/description/signature for the prompt. `get_full_system_prompt()` delegates to `utils.prompt.build_system_prompt()` — it no longer builds the prompt itself. `execute_tool_safely()` introspects each tool's signature, fills in defaults for missing parameters, and executes the call inside a try/except. `register_tool()` allows future dynamic registration. |
 | `read_file.py` | `read_file_tool(filename)` – validates the path, checks the 10 MB size limit, and reads the file with UTF-8 / latin-1 fallback. |
 | `list_files.py` | `list_files_tool(path)` – validates the path, iterates the directory, and returns a list of `{filename, type}` dicts (only entries that pass `validate_file_access` are included). |
 | `edit_file.py` | `edit_file_tool(path, old_str, new_str)` – if `old_str` is empty, creates or overwrites the file; otherwise replaces the first occurrence of `old_str` with `new_str`. Enforces the size limit and path sandbox. |

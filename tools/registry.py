@@ -38,24 +38,16 @@ def get_tool_str_representation(tool_name: str) -> str:
     """
 
 
-SYSTEM_PROMPT = """
-You are a coding assistant whose goal it is to help us solve coding tasks. You have access to a series of tools you can execute. Here are the tools
-
-{tool_list_repr}
-
-When you want to use a tool, reply with exactly one line in the format: 'tool: TOOL_NAME({{JSON_ARGS}})' and nothing else.
-Use compact single-line JSON with double quotes. After receiving a tool_result(...) message, continue the task.
-If no tool is needed, respond normally.
-Do not respond with a line starting with "tool:" if you do not intent to use that tool.
-"""
-
-
 def get_full_system_prompt() -> str:
-    tool_str_repr = ""
-    for tool_name in TOOL_REGISTRY:
-        tool_str_repr += "TOOL\n===" + get_tool_str_representation(tool_name)
-        tool_str_repr += f"\n{'=' * 15}\n"
-    return SYSTEM_PROMPT.format(tool_list_repr=tool_str_repr)
+    """Return the complete system prompt.
+
+    Delegates to :func:`utils.prompt.build_system_prompt`, which loads the
+    stub file, resolves ``{{FILE:...}}`` directives, and injects tool
+    descriptions into the ``{{TOOLS}}`` placeholder.  The result is cached
+    so repeated calls are cheap.
+    """
+    from utils.prompt import build_system_prompt
+    return build_system_prompt()
 
 
 def execute_tool_safely(

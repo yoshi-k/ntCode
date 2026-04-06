@@ -14,7 +14,7 @@ An AI-powered coding assistant that integrates with Claude AI to provide secure 
 - **Complete Git Integration** — Full workflow automation: status, diff, log, add, and commit
 - **AI-Powered Assistance** — Natural language interaction with Claude AI for coding tasks
 - **Security-First Design** — Restricted file system access and protection against path traversal
-- **Multiple Execution Modes** — Debug, verbose, and normal modes for different use cases
+- **Multiple Execution Modes** — Normal, debug, verbose, and batch modes for different use cases
 - **Comprehensive Logging** — Conversation and operation logging for debugging and audit trails
 - **Conversation Pruning** — Automatically trims history to stay within token limits
 - **API Error Handling** — Graceful recovery from timeouts, rate limits, and connection errors
@@ -63,6 +63,7 @@ An AI-powered coding assistant that integrates with Claude AI to provide secure 
 | `NTCODE_VERBOSE` | true/false | false | Enable interactive tool approval |
 | `NTCODE_LOG_CONVERSATIONS` | true/false | true | Enable conversation logging to file |
 | `NTCODE_API_TIMEOUT` | seconds | `60` | Timeout for Anthropic API calls |
+| `NTCODE_SYSTEM_PROMPT_FILE` | path | `system_prompt.md` | Path to the system-prompt stub file (relative to repo root, or absolute). Edit `system_prompt.md` to customise the base instructions, inlined context files, and tool-use format. |
 
 ### Execution Modes
 
@@ -95,6 +96,16 @@ NTCODE_DEBUG=true NTCODE_VERBOSE=true python ntCode.py
 ```
 - Maximum visibility and control
 - Best for development and security auditing
+
+#### Batch Mode
+```bash
+python ntCode.py --batch tasks.txt --out results.txt
+```
+- Reads instructions from a plain-text file (one per line; `#` lines and blank lines are skipped)
+- Writes all responses to `results.txt` in a structured format: `=== [N] You: <instruction> ===` / response / blank line
+- Slash-commands (`/reset`, `/save`, `/savepoint`, `/restore`, …) work exactly as in the TUI
+- Tool-approval prompts (VERBOSE_MODE) are auto-approved with a log warning
+- Useful for reproducible automation and testing
 
 #### Disable Conversation Logging
 ```bash

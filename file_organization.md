@@ -34,6 +34,7 @@ Contains no tool logic, no UI, and no LLM call-site code beyond the provider abs
 | File | Description |
 |------|-------------|
 | `__init__.py` | Empty package marker. |
+| `prompt.py` | System-prompt builder. `build_system_prompt()` loads the stub file named by `SYSTEM_PROMPT_FILE`, resolves every `{{FILE:path}}` directive by inlining the named file, and replaces `{{TOOLS}}` with the formatted descriptions of all registered tools. Result is module-level cached; call `invalidate_cache()` to force a rebuild (useful in tests). This is the single source of truth consumed by both `tools/registry.py` (`get_full_system_prompt()`) and the `/prompt` command. |
 | `config.py` | Single source of truth for all constants and runtime settings. Reads every `NTCODE_*` environment variable, configures the `logging` framework (handlers for console and `ntcode.log`), exposes the named `logger`, defines ANSI colour constants for the TUI, and sets `ALLOWED_BASE_PATHS`, `MAX_FILE_SIZE`, model defaults, timeout values, and the token-rate-limit constants. |
 | `security.py` | Path-safety and git-safety helpers used by every tool. `resolve_abs_path()` turns relative paths into absolute ones; `validate_file_access()` enforces sandbox restrictions and blocks path-traversal attempts; `validate_git_operation()` confirms a git repository is present; `run_git_command()` wraps `subprocess.run` with timeout handling and security checks. |
 | `rate_limiter.py` | `TokenRateLimiter` class implementing a sliding-window (60-second) token-consumption budget. `wait_for_capacity(estimated)` blocks until headroom is available and returns a reservation ID; `record_actual(id, actual)` corrects the reservation once the real API token counts are known. A module-level `_rate_limiter` singleton is shared by `AnthropicLLM`. |
@@ -82,6 +83,8 @@ never imports LLM or tool internals directly.
 | `__init__.py` | Empty package marker. |
 | `connector.py` | Backward-compatibility shim. Re-exports `Connector` and `Message` from `utils.connector` so any code importing `from frontend.connector import Connector` continues to work. |
 | `agent_loop.py` | TUI frontend. `run_coding_agent_loop()` prints the welcome banner, instantiates a `Connector`, starts `run_agent()` in a daemon background thread, then runs the `input()` / `print()` REPL loop. Forwards user input via `connector.send_user()` and blocks on `connector.receive_assistant_blocking()` for replies. Handles `KeyboardInterrupt` / `EOFError` gracefully and calls `connector.shutdown()` on exit. |
+| `batch_loop.py` | Batch frontend. `run_batch_loop(infile, outfile)` reads a plain-text instruction file (one prompt per non-blank, non-comment line), instantiates a `Connector`, starts `run_agent()` in a daemon background thread, and processes each instruction sequentially, writing structured output (`=== [N] You: … ===` / response / blank line) to `outfile`. Slash-commands (`/reset`, `/save`, `/savepoint`, `/restore`, etc.) are handled via `dispatch_line()` from `common.py`, so the full command set works identically to the TUI. In `VERBOSE_MODE`, tool-approval requests are auto-approved with a log warning. Invoked via `python ntCode.py --batch infile.txt --out outfile.txt`. |
+| `common.py` | Shared frontend logic used by both the TUI and batch frontends. Exports: `ERROR_PREFIXES` / `is_error_response()` — detect provider-level error sentinels; `HELP_TEXT` — the `/help` string; `handle_provider_command()` — handles `/provider` sub-commands and returns plain text; `DispatchResult` enum (`QUIT`, `LOCAL`, `CONTROL`, `USER`) and `DispatchOutcome` dataclass — describe what `dispatch_line()` did; `dispatch_line(line, connector)` — the central input router that handles all slash-commands (`/help`, `/tools`, `/prompt`, `/provider`, `/reset`, `/save`, `/load`, `/savepoint`, `/restore`, `/savepoints`, `/quit`) and forwards plain user messages to the agent. Contains no `print()`, `input()`, or ANSI colour code. |
 
 ---
 
@@ -127,7 +130,7 @@ All `.md` files live at the root. See the Root table above for `README.md`, `out
 | `backend/` | `utils/` | `config`, `security`, `rate_limiter`, `llm` |
 | `middleware/tools/` + registry + parser | `tools/` | one file per tool + `registry.py` (tool registry, system-prompt builder, `execute_tool_safely`) |
 | `middleware/` (connector + agent) | `utils/` (`connector.py` + `agent.py`) | message channel + LLM loop + tool parser |
-| `frontend/` | `frontend/` | `agent_loop.py` (TUI shell), `connector.py` (re-export shim) |
+| `frontend/` | `frontend/` | `agent_loop.py` (TUI shell), `batch_loop.py` (batch runner), `common.py` (shared constants), `connector.py` (re-export shim) |
 
 ### Dependency rules (enforced)
 

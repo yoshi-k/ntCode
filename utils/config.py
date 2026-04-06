@@ -8,6 +8,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+BASE_DIR = Path(__file__).parent.parent  # repo root
+
+# Path to the system-prompt stub file (relative to repo root, or absolute).
+SYSTEM_PROMPT_FILE: str = os.environ.get(
+    "NTCODE_SYSTEM_PROMPT_FILE", "system_prompt.md"
+)
+
+# ---------------------------------------------------------------------------
 # Configuration Constants
 # ---------------------------------------------------------------------------
 

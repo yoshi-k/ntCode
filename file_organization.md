@@ -11,6 +11,7 @@ with `ntCode.py` as a thin entry-point shim.
 | File | Description |
 |------|-------------|
 | `system_prompt.md` | **System-prompt stub** — the editable source for the LLM system prompt. Contains the base prose instructions, `{{TOOLS}}` (replaced at runtime with formatted tool descriptions), and `{{FILE:path}}` directives (each replaced with the content of the named file). Edit this file to change what the model is told about its role, context files, or tool-use format. Loaded by `utils/prompt.py`; controlled by `NTCODE_SYSTEM_PROMPT_FILE`. |
+| `system_prompt.md` | **System-prompt stub** — the editable source for the LLM system prompt. Contains the base prose instructions, `{{TOOLS}}` (replaced at runtime with formatted tool descriptions), and `{{FILE:path}}` directives (each replaced with the content of the named file). Edit this file to customise the model's role, add or remove context files, or change the tool-use format. Loaded by `utils/prompt.py`; controlled by `NTCODE_SYSTEM_PROMPT_FILE`. |
 | `ntCode.py` | Entry-point shim. Loads `.env`, then imports and calls `run_coding_agent_loop()` from `frontend/agent_loop.py`. Kept so that `python ntCode.py` continues to work. |
 | `agent.md` | **Start here** — high-level project orientation for agents and new contributors. Links to all key documents and explains the architecture in one sentence. |
 | `outline.md` | Strategy, architecture vision, planned features, and implementation-status summary. The place to capture decisions and future direction. |

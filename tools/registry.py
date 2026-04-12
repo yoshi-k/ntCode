@@ -30,6 +30,14 @@ def register_tool(name: str, fn: Callable) -> None:
 
 
 def get_tool_str_representation(tool_name: str) -> str:
+    """Return a human-readable description of one registered tool.
+
+    Used by the ``/tools`` command and by tests.  The format is the
+    original ntCode text-protocol layout (name / description / signature).
+    The system-prompt tool block is built by
+    :func:`utils.tool_format.format_tools_for_provider` which selects the
+    appropriate format for the active provider/model.
+    """
     tool = TOOL_REGISTRY[tool_name]
     return f"""
     Name: {tool_name}

@@ -27,11 +27,13 @@ from utils.config import (
     DEBUG_MODE,
     VERBOSE_MODE,
     MAX_CONVERSATION_LENGTH,
+    LLM_PROVIDER,
     logger,
 )
 from utils.llm import execute_llm_call, SessionHeader, ConversationManager
 from utils.connector import Connector
 from tools.registry import TOOL_REGISTRY, get_full_system_prompt, execute_tool_safely
+from utils.tool_format import get_parser_for_provider
 
 # Default directory used when the user does not supply a path for save/load.
 _DEFAULT_SAVE_DIR = "saves"
@@ -49,68 +51,34 @@ def _default_save_path() -> str:
 # Tool invocation parser
 # ---------------------------------------------------------------------------
 
+def _resolve_active_model() -> str:
+    """Return the model name string for the currently active provider."""
+    import os
+    if LLM_PROVIDER == "openai":
+        from utils.config import OPENAI_MODEL
+        return OPENAI_MODEL
+    from utils.config import DEFAULT_MODEL
+    return os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
+
+
+# Parser selected at agent startup based on the active provider/model.
+# Stored at module level so it is chosen once and reused for every turn.
+_active_parser = get_parser_for_provider(LLM_PROVIDER, _resolve_active_model())
+
+
 def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
-    """Return list of (tool_name, args) for every ``tool: NAME({...})`` line in *text*.
+    """Return list of (tool_name, args) extracted from *text*.
 
-    Lines that do not match the format, contain unknown tool names, or carry
-    malformed JSON are logged as warnings and silently skipped.
+    Delegates to the provider-aware parser selected at import time by
+    :func:`utils.tool_format.get_parser_for_provider`.  The parser is
+    determined once from ``LLM_PROVIDER`` and the active model name so that
+    the correct syntax (ntcode / xml / json_block) is used throughout the
+    session.
+
+    Lines that do not match the expected format, reference unknown tool names,
+    or carry malformed JSON are logged as warnings and silently skipped.
     """
-    invocations: List[Tuple[str, Dict[str, Any]]] = []
-
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line.startswith("tool:"):
-            continue
-        try:
-            after = line[len("tool:"):].strip()
-
-            if "(" not in after:
-                logger.warning("Invalid tool invocation (missing parentheses): %s", line)
-                continue
-
-            name, rest = after.split("(", 1)
-            name = name.strip()
-
-            if not name:
-                logger.warning("Invalid tool invocation (empty tool name): %s", line)
-                continue
-
-            if not rest.endswith(")"):
-                logger.warning(
-                    "Invalid tool invocation (missing closing parenthesis): %s", line
-                )
-                continue
-
-            json_str = rest[:-1].strip()
-
-            if not json_str:
-                args: Dict[str, Any] = {}
-            else:
-                try:
-                    args = json.loads(json_str)
-                    if not isinstance(args, dict):
-                        logger.warning(
-                            "Tool args must be a dict, got %s: %s",
-                            type(args).__name__,
-                            line,
-                        )
-                        continue
-                except json.JSONDecodeError as exc:
-                    logger.warning(
-                        "Invalid JSON in tool invocation '%s': %s", json_str, exc
-                    )
-                    continue
-
-            if name not in TOOL_REGISTRY:
-                logger.warning("Unknown tool name: %s", name)
-                continue
-
-            invocations.append((name, args))
-            logger.debug("Parsed tool invocation: %s args=%s", name, args)
-
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Unexpected error parsing tool invocation '%s': %s", line, exc)
-            continue
+    invocations = _active_parser(text)
 
     if DEBUG_MODE and invocations:
         logger.debug(

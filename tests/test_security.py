@@ -1,32 +1,16 @@
-"""Unit tests for path security validation in ntCode.py"""
+"""Unit tests for path security validation."""
 
-import sys
 import os
-import tempfile
+import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import types
-
-anthropicmod = types.ModuleType("anthropic")
-class _FakeAnthropic:
-    def __init__(self, **kwargs): pass
-anthropicmod.Anthropic = _FakeAnthropic
-anthropicmod.APITimeoutError = Exception
-anthropicmod.RateLimitError = Exception
-anthropicmod.APIConnectionError = Exception
-anthropicmod.AuthenticationError = Exception
-anthropicmod.APIError = Exception
-sys.modules["anthropic"] = anthropicmod
-
-dotenvmod = types.ModuleType("dotenv")
-dotenvmod.load_dotenv = lambda: None
-sys.modules["dotenv"] = dotenvmod
-
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 
-from ntCode import validate_file_access, resolve_abs_path, read_file_tool, edit_file_tool  # noqa: E402
+from utils.security import validate_file_access, resolve_abs_path
+from tools.read_file import read_file_tool
+from tools.edit_file import edit_file_tool
 
 
 # ---------------------------------------------------------------------------

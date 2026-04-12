@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
 """Basic tests for ntCode functionality."""
 
-import pytest
 import os
 import sys
+import pytest
 from pathlib import Path
 
-# Add parent directory to path so we can import ntCode
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ntCode import (
-    resolve_abs_path,
-    validate_file_access,
-    read_file_tool,
-    list_files_tool,
-    extract_tool_invocations
-)
+os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+
+from utils.security import resolve_abs_path, validate_file_access
+from tools.read_file import read_file_tool
+from tools.list_files import list_files_tool
+from utils.agent import extract_tool_invocations
 
 
 class TestPathHandling:

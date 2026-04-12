@@ -10,8 +10,13 @@ How it works
 2. Resolve every ``{{FILE:relative/path}}`` directive by reading the named
    file and inlining its content.  Missing files produce a warning comment
    rather than crashing.
-3. Replace the ``{{TOOLS}}`` placeholder with the formatted descriptions of
-   every tool currently registered in ``TOOL_REGISTRY``.
+3. Replace the ``{{TOOLS}}`` placeholder with tool descriptions formatted for
+   the **active provider and model**.  The format is selected by
+   :func:`utils.tool_format.format_tools_for_provider`:
+
+   * ``ntcode``    — original ``tool: NAME({...})`` protocol (Claude, GPT-*).
+   * ``xml``       — ``<tool_call>`` blocks (Qwen2.5-Instruct, Qwen3).
+   * ``json_block``— fenced JSON blocks (Mistral, Mixtral).
 
 The result is cached after the first call so that repeated calls (e.g. from
 the ``/prompt`` command and the agent startup) are cheap and always return
@@ -26,7 +31,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from utils.config import logger, BASE_DIR, SYSTEM_PROMPT_FILE
+from utils.config import logger, BASE_DIR, SYSTEM_PROMPT_FILE, LLM_PROVIDER
 
 # Matches {{FILE:some/relative/path.md}}
 _FILE_DIRECTIVE_RE = re.compile(r"\{\{FILE:([^}]+)\}\}")
@@ -42,12 +47,24 @@ def invalidate_cache() -> None:
     _cache = None
 
 
+# Sentinel that stands in for literal '{{TOOLS}}' text found inside inlined
+# files.  It is restored to '{{TOOLS}}' after the single legitimate injection
+# has been done, so the model sees the original documentation text unchanged.
+# The NUL bytes make accidental collision with real file content impossible.
+_TOOLS_SENTINEL = "\x00TOOLS_PLACEHOLDER\x00"
+
+
 def _resolve_file_directives(text: str, base: Path) -> str:
     """Replace every ``{{FILE:path}}`` in *text* with the content of that file.
 
     Paths are resolved relative to *base* (the repo root).  If a file cannot
     be read a warning is logged and a comment placeholder is left in the
     prompt so the problem is visible to the model.
+
+    Any literal ``{{TOOLS}}`` strings found *inside* the inlined file are
+    replaced with an internal sentinel so that the subsequent
+    :func:`_inject_tools` step does not expand them — only the single
+    ``{{TOOLS}}`` that appears directly in the stub file should be expanded.
     """
     def _replace(match: re.Match) -> str:
         rel = match.group(1).strip()
@@ -55,28 +72,43 @@ def _resolve_file_directives(text: str, base: Path) -> str:
         try:
             content = target.read_text(encoding="utf-8")
             logger.debug("prompt: inlined %s (%d chars)", rel, len(content))
-            return content
         except FileNotFoundError:
             logger.warning("prompt: {{FILE:%s}} not found — skipping", rel)
             return f"<!-- FILE NOT FOUND: {rel} -->"
         except OSError as exc:
             logger.warning("prompt: cannot read %s: %s", rel, exc)
             return f"<!-- COULD NOT READ: {rel}: {exc} -->"
+        # Neutralise any {{TOOLS}} strings that appear literally in the inlined
+        # file (e.g. documentation about this very placeholder) so they are not
+        # treated as injection targets.
+        return content.replace("{{TOOLS}}", _TOOLS_SENTINEL)
 
     return _FILE_DIRECTIVE_RE.sub(_replace, text)
 
 
 def _build_tool_block() -> str:
-    """Return the formatted tool-description block for the ``{{TOOLS}}`` placeholder."""
-    # Import here to avoid a circular import at module level
-    # (registry imports config; prompt imports registry only at call time).
-    from tools.registry import TOOL_REGISTRY, get_tool_str_representation
+    """Return the formatted tool-description block for the ``{{TOOLS}}`` placeholder.
 
-    parts: list[str] = []
-    for name in TOOL_REGISTRY:
-        parts.append("TOOL\n===\n" + get_tool_str_representation(name))
-        parts.append("=" * 15)
-    return "\n".join(parts)
+    Delegates to :func:`utils.tool_format.format_tools_for_provider` so that
+    the tool syntax in the system prompt matches what the active model expects.
+    The provider and model are read from ``utils.config`` at call time so they
+    reflect any runtime provider switch.
+    """
+    # Import here to avoid circular imports at module level.
+    from tools.registry import TOOL_REGISTRY
+    from utils.tool_format import format_tools_for_provider
+    import os
+
+    # Determine the active model name.
+    # AnthropicLLM uses NTCODE_MODEL / DEFAULT_MODEL; OpenAILLM uses OPENAI_MODEL.
+    if LLM_PROVIDER == "openai":
+        from utils.config import OPENAI_MODEL
+        model = OPENAI_MODEL
+    else:
+        from utils.config import DEFAULT_MODEL
+        model = os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
+
+    return format_tools_for_provider(LLM_PROVIDER, model, TOOL_REGISTRY)
 
 
 def build_system_prompt() -> str:
@@ -107,14 +139,18 @@ def build_system_prompt() -> str:
     # Step 1: inline {{FILE:...}} directives
     resolved = _resolve_file_directives(stub, BASE_DIR)
 
-    # Step 2: inject tool descriptions
+    # Step 2: inject tool descriptions at the one {{TOOLS}} in the stub.
+    # Any sentinels introduced by _resolve_file_directives (literal {{TOOLS}}
+    # text that came from inlined documentation files) are restored afterwards
+    # so the model sees them as plain text, not as injected tool blocks.
     tool_block = _build_tool_block()
     if "{{TOOLS}}" in resolved:
-        resolved = resolved.replace("{{TOOLS}}", tool_block)
+        resolved = resolved.replace("{{TOOLS}}", tool_block, 1)
     else:
         logger.warning(
             "prompt: stub contains no {{TOOLS}} placeholder — tool descriptions not injected"
         )
+    resolved = resolved.replace(_TOOLS_SENTINEL, "{{TOOLS}}")
 
     _cache = resolved
     logger.info("prompt: built (%d chars)", len(_cache))

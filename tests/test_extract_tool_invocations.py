@@ -1,32 +1,13 @@
-"""Unit tests for extract_tool_invocations() in ntCode.py"""
+"""Unit tests for extract_tool_invocations()."""
 
-import sys
 import os
+import sys
 
-# Allow importing ntCode from the parent directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Stub out anthropic and dotenv so ntCode can be imported without credentials
-import types
-
-anthropicmod = types.ModuleType("anthropic")
-class _FakeAnthropic:
-    def __init__(self, **kwargs): pass
-anthropicmod.Anthropic = _FakeAnthropic
-anthropicmod.APITimeoutError = Exception
-anthropicmod.RateLimitError = Exception
-anthropicmod.APIConnectionError = Exception
-anthropicmod.AuthenticationError = Exception
-anthropicmod.APIError = Exception
-sys.modules["anthropic"] = anthropicmod
-
-dotenvmod = types.ModuleType("dotenv")
-dotenvmod.load_dotenv = lambda: None
-sys.modules["dotenv"] = dotenvmod
 
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 
-from ntCode import extract_tool_invocations  # noqa: E402
+from utils.agent import extract_tool_invocations
 
 
 # ---------------------------------------------------------------------------

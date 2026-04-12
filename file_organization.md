@@ -125,6 +125,7 @@ All `.md` files live at the root. See the Root table above for `README.md`, `out
 |------|-------------|
 | `gitWorkflow.md` | Git workflow guidelines: branching strategy, commit conventions, and PR process. |
 | `gitTesting.md` | Guidelines for git-related testing: how to verify git tool behaviour and write git-touching tests. |
+| `prompt_doc.md` | **Prompt architecture reference.** Explains how `system_prompt.md` is assembled (stub → `{{FILE:…}}` inlining → `{{TOOLS}}` injection → cache), documents all three built-in calling conventions (ntcode / xml / json_block) with wire-format examples, and gives a step-by-step guide for adding a new calling convention for a new model family. |
 
 ---
 

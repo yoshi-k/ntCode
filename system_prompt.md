@@ -5,6 +5,8 @@ Use compact single-line JSON with double quotes. After receiving a tool_result(.
 If no tool is needed, respond normally.
 Do not respond with a line starting with "tool:" if you do not intend to use that tool.
 
+Note: if you are a real OpenAI endpoint (e.g. GPT-4o) and prefer to use your native function-calling format, that is also supported — ntCode will detect and handle tool_calls responses automatically. You do not need to force the text-protocol format above if your native format feels more natural.
+
 ## Project context
 
 {{FILE:agent.md}}

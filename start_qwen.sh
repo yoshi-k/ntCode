@@ -37,9 +37,11 @@ LLAMA_PORT="8080"
 export LLM_PROVIDER="openai"
 
 # ----- OpenAI-compatible settings (read by utils/config.py) ----------------
-export OPENAI_BASE_URL="http://${LLAMA_HOST}:${LLAMA_PORT}/v1"
+#export OPENAI_BASE_URL="http://${LLAMA_HOST}:${LLAMA_PORT}/v1"
+export OPENAI_BASE_URL="http://192.168.2.126:8080/v1"
 export OPENAI_API_KEY="llama-cpp-no-key"   # any non-empty string
-export OPENAI_MODEL="Qwen/Qwen3-27B"       # must match the loaded GGUF
+#export OPENAI_MODEL="Qwen/Qwen3-27B"       # must match the loaded GGUF
+export OPENAI_MODEL="gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf"
 export OPENAI_MAX_TOKENS="0"               # 0 = omit, let server decide
 export OPENAI_TEMPERATURE="0.7"
 export OPENAI_TIMEOUT="120.0"              # seconds; raise for slow GPUs

@@ -530,24 +530,37 @@ class AnthropicLLM(LLM):
         reservation_id = _rate_limiter.wait_for_capacity(estimated)
 
         start_time = time.time()
+        logger.debug(
+            f"API call starting: model={self.model} "
+            f"estimated_tokens={estimated} messages={len(messages)}"
+        )
 
-        if self._needs_caching_beta(system, messages):
-            response = self.client.beta.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                system=system,
-                messages=messages,
-                timeout=self.timeout,
-                betas=["prompt-caching-2024-07-31"],
+        try:
+            if self._needs_caching_beta(system, messages):
+                response = self.client.beta.messages.create(
+                    model=self.model,
+                    max_tokens=self.max_tokens,
+                    system=system,
+                    messages=messages,
+                    timeout=self.timeout,
+                    betas=["prompt-caching-2024-07-31"],
+                )
+            else:
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=self.max_tokens,
+                    system=system,
+                    messages=messages,
+                    timeout=self.timeout,
+                )
+        except Exception:
+            elapsed = time.time() - start_time
+            logger.error(
+                f"API call failed after {elapsed:.2f}s "
+                f"(model={self.model} estimated_tokens={estimated} "
+                f"messages={len(messages)})"
             )
-        else:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                system=system,
-                messages=messages,
-                timeout=self.timeout,
-            )
+            raise
 
         elapsed = time.time() - start_time
         response_text = response.content[0].text

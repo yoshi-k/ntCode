@@ -67,7 +67,7 @@ class OpenAILLM(LLM):
         Maximum tokens to generate.  ``0`` (default) omits the field so
         the server uses its own default.
     temperature:
-        Sampling temperature (0 – 2).  Defaults to 0.7.
+        Sampling temperature (0 - 2).  Defaults to 0.7.
     timeout:
         Total HTTP request timeout in seconds.
     max_retries:
@@ -110,7 +110,7 @@ class OpenAILLM(LLM):
             timeout=timeout,
         )
         logger.info(
-            f"[OpenAILLM] Ready — endpoint={self._endpoint}  model={self.model}"
+            f"[OpenAILLM] Ready - endpoint={self._endpoint}  model={self.model}"
         )
 
     # ------------------------------------------------------------------
@@ -131,11 +131,11 @@ class OpenAILLM(LLM):
             if DEBUG_MODE:
                 logger.debug(f"[OpenAILLM] Messages: {json.dumps(messages, indent=2)}")
 
-        # ── rate limiting ──────────────────────────────────────────────
+        # -- rate limiting ----------------------------------------------
         estimated = self._estimate_tokens(system, messages)
         logger.debug(f"[OpenAILLM] Estimated token cost: {estimated}")
         reservation_id = _rate_limiter.wait_for_capacity(estimated)
-        # ──────────────────────────────────────────────────────────────
+        # --------------------------------------------------------------
 
         payload = self._build_payload(system, messages)
         start = time.time()
@@ -145,9 +145,9 @@ class OpenAILLM(LLM):
         text, input_tokens, output_tokens = self._parse(raw)
         actual_tokens = input_tokens + output_tokens
 
-        # ── correct rate-limiter reservation ───────────────────────────
+        # -- correct rate-limiter reservation --------------------------
         _rate_limiter.record_actual(reservation_id, actual_tokens)
-        # ──────────────────────────────────────────────────────────────
+        # --------------------------------------------------------------
 
         if LOG_CONVERSATIONS:
             logger.info(
@@ -166,7 +166,7 @@ class OpenAILLM(LLM):
 
     @staticmethod
     def _estimate_tokens(system: str, messages: List[Dict[str, str]]) -> int:
-        """Heuristic token estimate: 1 token ≈ 4 characters."""
+        """Heuristic token estimate: 1 token ~= 4 characters."""
         total_chars = len(system)
         for msg in messages:
             content = msg.get("content", "")
@@ -204,6 +204,108 @@ class OpenAILLM(LLM):
         # Fallback for any other unexpected type
         return str(content)
 
+    @staticmethod
+    def _is_native_fc_model(model: str) -> bool:
+        """Return True if *model* is a real OpenAI GPT model that uses native
+        function calling via the ``tools`` parameter.
+
+        Real OpenAI models (gpt-4o, gpt-4, gpt-3.5-turbo, o1, o3, o4, etc.)
+        do NOT reliably follow the text-protocol ``tool: NAME({...})``
+        instructions in the system prompt — they expect the ``tools`` field in
+        the API payload instead.
+
+        Local models via Ollama/LM Studio/vLLM continue to use the text
+        protocol, so they are not affected.
+        """
+        m = model.lower()
+        return (
+            m.startswith("gpt-")
+            or m.startswith("o1")
+            or m.startswith("o3")
+            or m.startswith("o4")
+            or m.startswith("chatgpt-")
+        )
+
+    @staticmethod
+    def _build_tools_schema() -> List[Dict[str, Any]]:
+        """Build the OpenAI function-calling ``tools`` list from TOOL_REGISTRY.
+
+        Each entry follows the OpenAI JSON Schema spec::
+
+            {
+              "type": "function",
+              "function": {
+                "name": "...",
+                "description": "...",
+                "parameters": {
+                  "type": "object",
+                  "properties": {...},
+                  "required": [...]
+                }
+              }
+            }
+
+        Python type annotations are mapped to JSON Schema types; unannotated
+        parameters default to ``"string"``.
+        """
+        import inspect
+        from tools.registry import TOOL_REGISTRY
+
+        _ANN_TO_JSON: Dict[Any, str] = {
+            str: "string",
+            int: "integer",
+            float: "number",
+            bool: "boolean",
+        }
+
+        tools_schema: List[Dict[str, Any]] = []
+        for name, fn in TOOL_REGISTRY.items():
+            sig = inspect.signature(fn)
+            properties: Dict[str, Any] = {}
+            required: List[str] = []
+
+            for pname, param in sig.parameters.items():
+                ann = param.annotation
+                # Handle List[str] and similar typing generics
+                if hasattr(ann, "__name__"):
+                    # Plain type like str, int, bool
+                    json_type = _ANN_TO_JSON.get(ann, "string")
+                    prop: Dict[str, Any] = {"type": json_type, "description": pname}
+                else:
+                    origin = getattr(ann, "__origin__", None)
+                    if origin is list:
+                        type_args = getattr(ann, "__args__", (str,))
+                        item_type = _ANN_TO_JSON.get(type_args[0], "string") if type_args else "string"
+                        prop = {
+                            "type": "array",
+                            "items": {"type": item_type},
+                            "description": pname,
+                        }
+                    else:
+                        prop = {"type": "string", "description": pname}
+
+                if param.default is not inspect.Parameter.empty:
+                    prop["default"] = param.default
+                else:
+                    required.append(pname)
+
+                properties[pname] = prop
+
+            fn_schema: Dict[str, Any] = {
+                "name": name,
+                "description": (fn.__doc__ or "").strip(),
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                },
+            }
+            if required:
+                fn_schema["parameters"]["required"] = required
+
+            tools_schema.append({"type": "function", "function": fn_schema})
+
+        return tools_schema
+
     def _build_payload(self, system: "str | list", messages: List[Dict[str, Any]]) -> dict:
         """Assemble the JSON body for /chat/completions.
 
@@ -211,6 +313,11 @@ class OpenAILLM(LLM):
         messages produced by ConversationManager (which may carry
         cache_control blocks) are flattened to plain strings before being
         sent to the OpenAI-compatible endpoint.
+
+        For real OpenAI GPT models, includes the ``tools`` parameter so that
+        native function calling is activated.  The ``_parse()`` method then
+        converts any ``tool_calls`` in the response back to ntcode text so
+        the rest of the stack needs no changes.
 
         Raises:
             ValueError: If a message is missing the required ``role`` key.
@@ -235,8 +342,22 @@ class OpenAILLM(LLM):
             "messages": openai_messages,
             "temperature": self.temperature,
         }
-        if self.max_tokens:          # omit when 0 — let the server decide
+        if self.max_tokens:          # omit when 0 - let the server decide
             body["max_tokens"] = self.max_tokens
+
+        # Pass native function-calling schema for real OpenAI GPT models.
+        # Local/other models use the text-protocol instructions in the system
+        # prompt instead; adding "tools" would confuse them or cause errors.
+        if self._is_native_fc_model(self.model):
+            tools_schema = self._build_tools_schema()
+            if tools_schema:
+                body["tools"] = tools_schema
+                body["tool_choice"] = "auto"
+                logger.debug(
+                    "[OpenAILLM] Added %d tool(s) to payload for native function calling.",
+                    len(tools_schema),
+                )
+
         return body
 
     def _post_with_retry(self, payload: dict) -> dict:
@@ -244,7 +365,7 @@ class OpenAILLM(LLM):
         POST to /chat/completions with exponential-backoff retries.
 
         * Retries on 5xx responses and network/timeout errors.
-        * Raises immediately on 4xx (client error — no point retrying).
+        * Raises immediately on 4xx (client error - no point retrying).
         """
         delay = self.retry_delay
         last_error: Exception = RuntimeError("No attempts made")
@@ -259,24 +380,24 @@ class OpenAILLM(LLM):
                     )
                     return resp.json()
 
-                # 4xx — client-side error, do not retry
+                # 4xx - client-side error, do not retry
                 if 400 <= resp.status_code < 500:
                     self._raise_for_4xx(resp)
 
-                # 5xx — transient server error, retry
+                # 5xx - transient server error, retry
                 last_error = RuntimeError(
                     f"HTTP {resp.status_code}: {resp.text[:200]}"
                 )
                 logger.warning(
                     f"[OpenAILLM] Server error {resp.status_code} on attempt "
-                    f"{attempt}/{self.max_retries} — retrying in {delay:.1f}s"
+                    f"{attempt}/{self.max_retries} - retrying in {delay:.1f}s"
                 )
 
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
                 last_error = exc
                 logger.warning(
                     f"[OpenAILLM] Network error on attempt {attempt}/{self.max_retries}: "
-                    f"{exc!r} — retrying in {delay:.1f}s"
+                    f"{exc!r} - retrying in {delay:.1f}s"
                 )
 
             if attempt < self.max_retries:
@@ -298,13 +419,13 @@ class OpenAILLM(LLM):
             detail = resp.text
         if code == 401:
             raise PermissionError(
-                f"[OpenAILLM] 401 Unauthorized — check OPENAI_API_KEY. ({detail})"
+                f"[OpenAILLM] 401 Unauthorized - check OPENAI_API_KEY. ({detail})"
             )
         if code == 403:
             raise PermissionError(f"[OpenAILLM] 403 Forbidden. ({detail})")
         if code == 404:
             raise ValueError(
-                f"[OpenAILLM] 404 Not Found — wrong OPENAI_BASE_URL or OPENAI_MODEL? "
+                f"[OpenAILLM] 404 Not Found - wrong OPENAI_BASE_URL or OPENAI_MODEL? "
                 f"({detail})"
             )
         if code == 429:
@@ -319,19 +440,68 @@ class OpenAILLM(LLM):
         Extract (text, input_tokens, output_tokens) from a /chat/completions
         response dict.  Token counts gracefully default to 0 when the server
         omits the ``usage`` field (some local servers do this).
+
+        Handles two response shapes:
+
+        1. Plain text reply -- ``choices[0].message.content`` is a non-empty
+           string.  Returned as-is.
+
+        2. Native function-calling reply -- ``choices[0].message.content`` is
+           ``null`` and ``choices[0].message.tool_calls`` contains one or more
+           structured tool invocations (as returned by real OpenAI endpoints
+           such as GPT-4o when they decide to use their native tool-calling
+           API rather than following the text-protocol instructions in the
+           system prompt).  Each entry is converted into an ntcode-format
+           ``tool: NAME({...})`` text line so the existing ntcode parser can
+           handle it unchanged.
         """
         try:
-            text: str = raw["choices"][0]["message"]["content"]
+            message = raw["choices"][0]["message"]
         except (KeyError, IndexError) as exc:
             raise RuntimeError(
-                f"[OpenAILLM] Unexpected response shape — missing choices[0].message.content.\n"
+                f"[OpenAILLM] Unexpected response shape - missing choices[0].message.\n"
                 f"raw={json.dumps(raw)[:500]}"
             ) from exc
+
+        content: str = message.get("content") or ""
+
+        # If content is empty the model may have used native tool_calls instead.
+        if not content:
+            tool_calls = message.get("tool_calls") or []
+            if tool_calls:
+                lines: List[str] = []
+                for tc in tool_calls:
+                    try:
+                        fn = tc["function"]
+                        name: str = fn["name"]
+                        # arguments is a JSON string in the OpenAI wire format.
+                        args_str: str = fn.get("arguments", "{}")
+                        # Validate it parses as JSON so the ntcode parser won't
+                        # choke; re-serialise to ensure compact single-line form.
+                        args_obj = json.loads(args_str)
+                        args_compact = json.dumps(args_obj, ensure_ascii=False)
+                        lines.append(f"tool: {name}({args_compact})")
+                        logger.debug(
+                            "[OpenAILLM] Converted native tool_call to ntcode: %s",
+                            lines[-1],
+                        )
+                    except (KeyError, json.JSONDecodeError) as exc:
+                        logger.warning(
+                            "[OpenAILLM] Skipping malformed tool_call entry %r: %s",
+                            tc,
+                            exc,
+                        )
+                content = "\n".join(lines)
+                if content:
+                    logger.info(
+                        "[OpenAILLM] Converted %d native tool_call(s) to ntcode text.",
+                        len(lines),
+                    )
 
         usage = raw.get("usage") or {}
         input_tokens: int = usage.get("prompt_tokens", 0)
         output_tokens: int = usage.get("completion_tokens", 0)
-        return text, input_tokens, output_tokens
+        return content, input_tokens, output_tokens
 
     def close(self) -> None:
         """Close the underlying httpx connection pool."""

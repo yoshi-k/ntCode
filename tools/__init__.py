@@ -6,6 +6,7 @@ from .git_commit import git_commit_tool
 from .git_status import git_status_tool
 from .git_diff import git_diff_tool
 from .git_log import git_log_tool
+from .search_web import search_web_tool
 
 __all__ = [
     "read_file_tool",
@@ -16,4 +17,5 @@ __all__ = [
     "git_status_tool",
     "git_diff_tool",
     "git_log_tool",
+    "search_web_tool",
 ]

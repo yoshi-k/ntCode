@@ -17,6 +17,8 @@ ntCode is an exploration of an AI coding assistant, originally vibecoded from a 
 
 ---
 
+# Notes -- important to check
+For save
 ## Architecture Vision
 
 Three clean layers: **Frontend → Middleware → Backend**.
@@ -58,6 +60,11 @@ The system should run the test suite before any `git commit`, either inline or a
 ### Environment Safety
 Automatic backup of files before editing. Restricted-privilege sandbox execution.
 
+### More tools
+Websearch tool search the web
+web tool, read a website
+rag tooling, outmatic memory via rag? 
+
 ### Workflow Vision
 ```
 Issue Tracker → ntCode.py → git → CI
@@ -82,10 +89,7 @@ Issue tracker starts as a plain `.md` file; later integrates with a real tracker
 
 ### High Priority
 - [ ] Fix JSON parsing crash in `extract_tool_invocations()` — see [`bugs.md`](bugs.md) #1
-- [ ] Add user help command — in-session help listing available tools and modes
-- [ ] Conversation save/load — persist and restore sessions
 - [ ] Automatic file backup before destructive edits
-- [ ] File extension validation
 - [ ] Confirmation prompt for destructive operations
 
 ### Medium Priority
@@ -117,10 +121,3 @@ Issue tracker starts as a plain `.md` file; later integrates with a real tracker
 - Fully configurable via env vars (`config.py`, `.env.example`)
 - Unit and integration test suite (`tests/`)
 - `DummyLLM` for offline / deterministic testing
-
-### 🔧 Open
-See [`bugs.md`](bugs.md) for full diagnostic detail.
-
-1. Malformed JSON in tool calls crashes the agent — **highest priority**.
-2. Timeout logging gaps — root cause not always captured on the exception path.
-3. Claude duplicates tool-use narration — needs wire-level logging investigation.

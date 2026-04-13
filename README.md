@@ -138,6 +138,68 @@ NTCODE_LOG_CONVERSATIONS=false python ntCode.py
 
 ---
 
+## ⚙️ Runtime Configuration
+
+All environment variables can be viewed and changed at runtime via the `/config` slash command — no restart needed.
+
+### View settings
+```
+/config                        # show all settings (grouped, with change markers)
+/config help GIT_TIMEOUT       # show description, current value, and default for one key
+```
+
+### Change settings
+```
+/config set DEFAULT_MODEL claude-3-5-sonnet-20241022
+/config set GIT_TIMEOUT 60
+/config set VERBOSE_MODE true
+/config set OPENAI_TEMPERATURE 0.3
+```
+
+Type coercion is automatic: booleans accept `true/false/yes/no/1/0`; integers and floats accept numeric strings.
+
+### Save and load
+```
+/config save                   # save to ntcode_config.json
+/config save my_settings.json  # save to a named file
+/config load                   # load from ntcode_config.json
+/config load my_settings.json  # load from a named file
+```
+
+Saved files are plain JSON and can be edited by hand.  Unknown keys in a file are silently skipped; validation errors are reported per-key without aborting the load.
+
+### Reset
+```
+/config reset                  # restore all settings to startup defaults
+/config reset GIT_TIMEOUT      # restore one setting to its startup default
+```
+
+### Configurable keys
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `LLM_PROVIDER` | str | Active provider (`anthropic` \| `openai`) |
+| `DEFAULT_MODEL` | str | Anthropic model name |
+| `ANTHROPIC_API_KEY` | str | Anthropic API key (masked in display) |
+| `OPENAI_MODEL` | str | OpenAI-compatible model name |
+| `OPENAI_BASE_URL` | str | OpenAI-compatible endpoint URL |
+| `OPENAI_API_KEY` | str | OpenAI API key (masked in display) |
+| `OPENAI_MAX_TOKENS` | int | Max tokens for OpenAI responses (0 = server default) |
+| `OPENAI_TEMPERATURE` | float | Sampling temperature for OpenAI (0.0–2.0) |
+| `API_TIMEOUT` | float | LLM API call timeout (seconds) |
+| `GIT_TIMEOUT` | int | Git command timeout (seconds) |
+| `OPENAI_TIMEOUT` | float | OpenAI endpoint timeout (seconds) |
+| `OPENAI_MAX_RETRIES` | int | Max retries for OpenAI endpoint |
+| `TOKEN_LIMIT_PER_MINUTE` | int | Token rate limit per minute |
+| `MAX_CONVERSATION_LENGTH` | int | Max task-context messages before pruning |
+| `MAX_FILE_SIZE` | int | Max file size in bytes for read/edit |
+| `SYSTEM_PROMPT_FILE` | str | Path to the system-prompt stub file |
+| `DEBUG_MODE` | bool | Enable detailed debug logging |
+| `VERBOSE_MODE` | bool | Enable interactive tool-approval prompts |
+| `LOG_CONVERSATIONS` | bool | Log conversations to `ntcode.log` |
+
+---
+
 ## 🔒 Security Features
 
 - **Path Validation** — All file operations restricted to current directory and subdirectories

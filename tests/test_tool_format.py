@@ -77,7 +77,16 @@ class TestDetectFamily:
         assert self._call("openai", "phi-3-mini") == "ntcode"
 
     def test_gemma(self):
-        assert self._call("openai", "gemma-2-9b") == "ntcode"
+        assert self._call("openai", "gemma-2-9b") == "gemma"
+
+    def test_gemma3(self):
+        assert self._call("openai", "google/gemma-3-27b-it") == "gemma"
+
+    def test_gemma4(self):
+        assert self._call("openai", "gemma-4") == "gemma"
+
+    def test_gemma_uppercase(self):
+        assert self._call("openai", "GEMMA-3-27B") == "gemma"
 
     # ---- Qwen ---------------------------------------------------------------
     def test_qwen3_27b(self):
@@ -386,3 +395,116 @@ class TestGetParserForProvider:
         with patch(_REGISTRY_PATH, _STUB_REGISTRY):
             result = parser("No tool calls here.")
         assert isinstance(result, list)
+
+    def test_gemma_returns_gemma_parser(self):
+        from utils.tool_format import _parse_gemma
+        assert self._get("openai", "gemma-3-27b-it") is _parse_gemma
+
+
+# ===========================================================================
+# gemma parser
+# ===========================================================================
+
+class TestParseGemma:
+    """Tests for _parse_gemma()."""
+
+    def _parse(self, text: str):
+        from utils.tool_format import _parse_gemma
+        with patch(_REGISTRY_PATH, _STUB_REGISTRY):
+            return _parse_gemma(text)
+
+    def test_single_call_no_args(self):
+        text = "<|tool_call>call:tool:git_status({})<tool_call|>"
+        assert self._parse(text) == [("git_status", {})]
+
+    def test_single_call_with_quoted_args(self):
+        text = '<|tool_call>call:tool:read_file({"filename": "README.md"})<tool_call|>'
+        assert self._parse(text) == [("read_file", {"filename": "README.md"})]
+
+    def test_unquoted_keys_fixed(self):
+        """JS-style unquoted keys should be accepted."""
+        text = '<|tool_call>call:tool:read_file({filename: "README.md"})<tool_call|>'
+        assert self._parse(text) == [("read_file", {"filename": "README.md"})]
+
+    def test_without_call_tool_prefix(self):
+        """Delimiter body without the call:tool: prefix should also parse."""
+        text = '<|tool_call>git_status({})<tool_call|>'
+        assert self._parse(text) == [("git_status", {})]
+
+    def test_multiple_blocks(self):
+        text = (
+            '<|tool_call>call:tool:git_status({})<tool_call|>\n'
+            'Some prose.\n'
+            '<|tool_call>call:tool:read_file({"filename": "a.py"})<tool_call|>'
+        )
+        result = self._parse(text)
+        assert result == [
+            ("git_status", {}),
+            ("read_file", {"filename": "a.py"}),
+        ]
+
+    def test_prose_ignored(self):
+        text = 'Thinking...\n<|tool_call>call:tool:git_status({})<tool_call|>\nDone.'
+        assert self._parse(text) == [("git_status", {})]
+
+    def test_unknown_tool_skipped(self):
+        text = "<|tool_call>call:tool:no_such_tool({})<tool_call|>"
+        assert self._parse(text) == []
+
+    def test_malformed_json_skipped(self):
+        text = "<|tool_call>call:tool:read_file({bad!!! json})<tool_call|>"
+        assert self._parse(text) == []
+
+    def test_missing_parens_skipped(self):
+        text = "<|tool_call>call:tool:git_status<tool_call|>"
+        assert self._parse(text) == []
+
+    def test_no_blocks_returns_empty(self):
+        assert self._parse("Just a plain response.") == []
+
+    def test_actual_gemma4_output(self):
+        """Regression test using the exact output captured from Gemma4."""
+        text = '<|tool_call>call:tool:read_file({path: "."})<tool_call|>'
+        # Note: read_file not list_files here since stub only has read_file
+        # Use list_files-style: patch with a registry that has list_files
+        from utils.tool_format import _parse_gemma
+        stub = {
+            "list_files": _stub_git_status,  # reuse stub fn, name is what matters
+            "read_file": _stub_read,
+        }
+        with patch(_REGISTRY_PATH, stub):
+            result = _parse_gemma('<|tool_call>call:tool:list_files({path: "."})<tool_call|>')
+        assert result == [("list_files", {"path": "."})]
+
+
+# ===========================================================================
+# gemma formatter
+# ===========================================================================
+
+class TestFormatGemma:
+    """Smoke-tests for the Gemma tool-description formatter."""
+
+    def _format(self, model: str) -> str:
+        from utils.tool_format import format_tools_for_provider
+        return format_tools_for_provider("openai", model, _STUB_REGISTRY)
+
+    def test_contains_delimiter_instruction(self):
+        out = self._format("gemma-3-27b-it")
+        assert "<|tool_call>" in out
+        assert "<tool_call|>" in out
+
+    def test_contains_tool_names(self):
+        out = self._format("gemma-3-27b-it")
+        assert "read_file" in out
+        assert "git_status" in out
+
+    def test_contains_json_schema_fields(self):
+        out = self._format("google/gemma-4")
+        assert '"name"' in out
+        assert '"description"' in out
+        assert '"parameters"' in out
+
+    def test_gemma4_model_name_detected(self):
+        """format_tools_for_provider selects gemma family for gemma-4."""
+        from utils.tool_format import _detect_family
+        assert _detect_family("openai", "gemma-4") == "gemma"

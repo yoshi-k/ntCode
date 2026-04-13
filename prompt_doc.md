@@ -187,6 +187,53 @@ JSON.
 tool_result({"key": "value", ...})
 ```
 
+#### Native function-calling fallback (real OpenAI endpoints)
+
+Real OpenAI endpoints (GPT-4o, GPT-4-turbo, etc.) may ignore the
+text-protocol instructions above and instead respond using the OpenAI native
+function-calling format, where `choices[0].message.content` is `null` and
+tool invocations appear in `choices[0].message.tool_calls`:
+
+```json
+{
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [{
+        "id": "call_abc123",
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "arguments": "{\"filename\": \"README.md\"}"
+        }
+      }]
+    }
+  }]
+}
+```
+
+`OpenAILLM._parse()` in `utils/openai_llm.py` detects this shape
+(content is null/empty and tool_calls is non-empty) and automatically
+converts each `tool_calls` entry into an ntcode-format text line:
+
+```
+tool: read_file({"filename": "README.md"})
+```
+
+This converted text is then returned to the agent and handled by the
+standard `_parse_ntcode()` parser — no changes are needed anywhere else
+in the stack.  The conversion is logged at INFO level:
+
+```
+INFO  [OpenAILLM] Converted 1 native tool_call(s) to ntcode text.
+```
+
+This means ntCode works correctly with real OpenAI endpoints regardless
+of whether they follow the text-protocol instructions or use their native
+format.  Local models served via llama.cpp / Ollama (which do not implement
+native function-calling) always use the text-protocol path.
+
 ---
 
 ### 4.2 `xml` — Qwen2.5-Instruct, Qwen3
@@ -234,6 +281,37 @@ result format does not change between conventions, only the invocation format.
 
 **Trigger:** model name contains `mistral` or `mixtral` (case-insensitive).
 
+---
+
+### 4.4 `gemma` — Gemma 3/4 instruct models
+
+**Trigger:** model name contains `gemma` (case-insensitive).
+
+Gemma instruct models (e.g. `gemma-4`, `google/gemma-3-27b-it`) emit tool calls
+using pipe-angle-bracket delimiter tokens and a `call:tool:` prefix:
+
+```
+<|tool_call>call:tool:list_files({"path": "."})<tool_call|>
+```
+
+The model sometimes also produces JS-style unquoted keys:
+
+```
+<|tool_call>call:tool:list_files({path: "."})<tool_call|>
+```
+
+**Tool description block** (produced by `_format_tools_gemma`): a header explaining
+the `<|tool_call>...<tool_call|>` syntax with a concrete example, followed by
+one JSON-schema object per tool (same schema shape as the xml/json_block formatters).
+
+**Parser** (`_parse_gemma`): uses a regex to find `<|tool_call>…<tool_call|>` blocks,
+strips the optional `call:tool:` prefix, splits on the first `(` to extract the
+tool name, then attempts strict `json.loads` on the argument body. If that fails,
+`_fix_unquoted_keys()` quotes bare identifier keys before retrying. Logs a warning
+and skips on any unrecoverable parse error.
+
+**Tool result** fed back: same `tool_result({…})` format as all other conventions.
+
 Smaller Mistral fine-tunes accessed via llama.cpp reliably produce fenced
 JSON blocks when prompted with this format.
 
@@ -269,6 +347,8 @@ def _detect_family(provider: str, model: str) -> str:
         return "xml"
     if "mistral" in m or "mixtral" in m:
         return "json_block"
+    if "gemma" in m:
+        return "gemma"
     return "ntcode"   # default
 ```
 

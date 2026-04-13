@@ -8,32 +8,21 @@ This document tracks active bugs and their diagnostic analysis. Check here befor
 
 ## Open Bugs
 
-### 1. Claude duplicates tool-use documentation
-- [ ] **Symptom**: Claude's responses sometimes re-narrate or re-document tool invocations that have already been executed and recorded, inflating conversation history.
-- **Current evidence**: Debug logs show tool invocations are parsed correctly, but `extract_tool_invocations()` may also match natural-language prose that describes tool use.
-- **Diagnostic needs**:
-  - Log the exact wire payload sent to and received from the API (request body + response body).
-  - Check `extract_tool_invocations()` regex/parser for false positives on prose.
-  - Inspect whether the system prompt encourages Claude to narrate its own tool use.
-- **Likely root causes**:
-  - System prompt phrasing invites Claude to describe what it is about to do before doing it.
-  - Parser over-matches natural-language mentions of tool names.
-
-### 2. Timeout logging gaps
-- [ ] **Symptom**: When a request times out, no root cause appears in the logs — only a generic timeout message.
-- **Current evidence**: Anthropic API calls have timeout support in `AnthropicLLM.call()`, but elapsed time and request size are not always logged before the exception propagates.
-- **Diagnostic needs**:
-  - Log conversation history size (token estimate) immediately before every API call.
-  - Log elapsed time even when the call raises an exception.
-  - Test with progressively larger conversation histories to find the breaking point.
-- **Likely root causes**:
-  - Log statement only reached on success path, not in exception handler.
-  - Large conversation histories sent with each request despite `_prune_conversation()`.
-
 ---
 
 ## Resolved Bugs
 
+- ✅ **Real OpenAI models don't invoke tools** — `OpenAILLM._build_payload()` now calls
+  `_is_native_fc_model()` to detect `gpt-*`, `o1`, `o3`, `o4`, `chatgpt-*` models and
+  injects a full OpenAI function-calling `tools` schema (built by `_build_tools_schema()`
+  from `TOOL_REGISTRY`) plus `"tool_choice": "auto"` into the API payload.  The existing
+  `_parse()` method already handled the response side: it converts `tool_calls` entries
+  in the response back to `tool: NAME({...})` ntcode text so the rest of the stack needs
+  no changes.  Local models (Ollama, LM Studio, etc.) are unaffected — `tools` is only
+  added for detected GPT model names.
+
+- ✅ **Timeout logging gaps** — `AnthropicLLM.call()` now wraps the API call in `try/finally`; elapsed time, model, estimated token count, and message count are logged at ERROR level whenever an exception is raised, before re-raising.
+- ✅ **Claude duplicates tool-use documentation** — System prompt and `extract_tool_invocations()` parser reviewed; false positives resolved.
 - ✅ **Malformed JSON crashes the application** — `extract_tool_invocations()` in `utils/agent.py` uses `except json.JSONDecodeError` (not bare `except Exception`) and logs bad payloads at WARNING level with the parse error included. Agent never crashes on malformed LLM output.
 - ✅ **`test_api_key.py` hard-coded model and interactive prompt** — Now reads `ANTHROPIC_API_KEY` from environment/`.env` (no interactive prompt), and uses `DEFAULT_MODEL` from `utils/config.py` overridable via `NTCODE_MODEL` env var. Prints the model under test before the API call.
 - ✅ **API timeout handling** — `AnthropicLLM.call()` includes timeout support; `execute_llm_call()` catches and humanises timeout exceptions.
@@ -46,8 +35,13 @@ This document tracks active bugs and their diagnostic analysis. Check here befor
 
 ## Next Immediate Actions
 
-1. **Investigate tool-use duplication** *(Bug #1 above)* — Add wire-level request/response logging to identify whether the system prompt or the parser is the root cause.
-2. **Improve error messages in tools** — Replace generic `Exception` text in tool files with user-friendly, actionable messages (distinguish "file not found" vs "permission denied" vs "file too large").
+1. **Improve error messages in tools** — Replace generic `Exception` text in tool files with user-friendly, actionable messages (distinguish "file not found" vs "permission denied" vs "file too large").
+
+---
+
+## Recently Resolved
+
+- ✅ **Gemma4 tool calling broken** — Gemma 3/4 instruct models (served via llama.cpp) emit tool calls in a unique format: `<|tool_call>call:tool:NAME({...})<tool_call|>` with optional JS-style unquoted keys. The `ntcode` parser could not parse this. Fixed by adding a `gemma` family to `utils/tool_format.py`: `_detect_family()` now returns `"gemma"` for any model name containing `"gemma"` (case-insensitive); `_format_tools_gemma()` instructs the model to use its native delimiter syntax with strict JSON; `_parse_gemma()` handles the delimiter tokens, strips the `call:tool:` prefix, and fixes unquoted keys via `_fix_unquoted_keys()` before JSON parsing. Full test coverage added in `tests/test_tool_format.py`.
 
 ---
 

@@ -1,5 +1,8 @@
 """Provider-aware tool prompt formatters and response parsers for ntCode.
 
+.. note:: This file has been extended with a ``gemma`` family for Gemma 3/4
+   models served via llama.cpp.  See the ``gemma`` section below.
+
 This module is the single place where model-family differences in tool-call
 conventions are handled.  Everything else in the stack (ConversationManager,
 execute_tool_safely, the tool files themselves) stays completely unchanged.
@@ -38,6 +41,15 @@ Supported model families
         {"tool": "tool_name", "args": {"key": "value"}}
         ```
 
+``gemma``
+    Gemma 3/4 instruct models (google/gemma-3-27b-it, gemma-4, etc.) emit
+    tool calls wrapped in pipe-angle-bracket delimiter tokens::
+
+        <|tool_call>call:tool:NAME({"key": "value"})<tool_call|>
+
+    The parser also tolerates JS-style unquoted keys that the model
+    sometimes produces: ``{key: "value"}``.
+
 Adding a new format
 -------------------
 1.  Write a ``_format_tools_<name>()`` function that returns the tool-block
@@ -75,7 +87,7 @@ def _detect_family(provider: str, model: str) -> str:
     The detection is purely based on the model name string (lowercased).
     Add new patterns here when you add a new format.
 
-    Returns one of: ``"ntcode"``, ``"xml"``, ``"json_block"``.
+    Returns one of: ``"ntcode"``, ``"xml"``, ``"json_block"``, ``"gemma"``.
     """
     m = model.lower()
 
@@ -90,7 +102,12 @@ def _detect_family(provider: str, model: str) -> str:
     if "mistral" in m or "mixtral" in m:
         return "json_block"
 
-    # Everything else — Claude, GPT-*, Llama, Phi, Gemma — uses the default
+    # Gemma 3/4 instruct models emit <|tool_call>call:tool:NAME({...})<tool_call|>
+    # with occasional JS-style unquoted keys in the argument object.
+    if "gemma" in m:
+        return "gemma"
+
+    # Everything else — Claude, GPT-*, Llama, Phi — uses the default
     # ntCode text protocol which they follow reliably when prompted.
     return "ntcode"
 
@@ -407,6 +424,161 @@ def _parse_json_block(text: str) -> List[Tuple[str, Dict[str, Any]]]:
 
 
 # ===========================================================================
+# gemma format  (Gemma 3/4 instruct models via llama.cpp)
+# ===========================================================================
+
+_GEMMA_TOOL_PROMPT_HEADER = """\
+You have access to the following tools. To call a tool, output ONLY the
+following on its own line and nothing else:
+
+<|tool_call>call:tool:TOOL_NAME({"arg": "value"})<tool_call|>
+
+Rules:
+- Replace TOOL_NAME with the exact tool name.
+- Replace the JSON object with the actual arguments as strict JSON
+  (keys must be double-quoted strings).
+- If the tool takes no arguments use an empty object: {}.
+- Output ONLY the <|tool_call>...<tool_call|> line — no prose before or after.
+- After receiving a tool_result(...) message, continue the task normally.
+- If no tool is needed, respond normally without the delimiter tokens.
+
+Available tools:
+"""
+
+
+def _format_tools_gemma(tool_registry: ToolRegistry) -> str:
+    """Return the {{TOOLS}} block for Gemma instruct models.
+
+    Instructs the model to use its native
+    ``<|tool_call>call:tool:NAME({...})<tool_call|>`` delimiter style
+    with strict JSON arguments.
+    """
+    parts: list[str] = [_GEMMA_TOOL_PROMPT_HEADER]
+    for name, fn in tool_registry.items():
+        sig = inspect.signature(fn)
+        params: dict[str, Any] = {}
+        for pname, param in sig.parameters.items():
+            ann = param.annotation
+            type_str = (
+                ann.__name__ if hasattr(ann, "__name__")
+                else str(ann).replace("typing.", "")
+            )
+            entry: dict[str, Any] = {"type": type_str}
+            if param.default is not inspect.Parameter.empty:
+                entry["default"] = param.default
+            params[pname] = entry
+
+        schema = {
+            "name": name,
+            "description": (fn.__doc__ or "").strip(),
+            "parameters": params,
+        }
+        parts.append(json.dumps(schema, indent=2))
+        parts.append("-" * 40)
+    return "\n".join(parts)
+
+
+# Matches <|tool_call>...<tool_call|> blocks.
+# The body is everything between the two delimiter tokens.
+_GEMMA_BLOCK_RE = re.compile(
+    r"<\|tool_call>(.*?)<tool_call\|>",
+    re.DOTALL,
+)
+
+# Matches the optional "call:tool:" prefix Gemma prepends to the tool name.
+_GEMMA_PREFIX_RE = re.compile(r"^(?:call:tool:)?")
+
+
+def _fix_unquoted_keys(s: str) -> str:
+    """Best-effort conversion of JS-style unquoted object keys to JSON.
+
+    Gemma sometimes emits ``{path: "."}`` instead of ``{"path": "."}``.  This
+    function quotes bare identifier keys so ``json.loads`` can parse them.
+    Only top-level keys are targeted; nested objects are handled recursively
+    by the same regex pass over the whole string.
+
+    The regex matches a word-character sequence that is preceded by ``{`` or
+    ``,`` (with optional whitespace) and followed by ``:``, and is not already
+    surrounded by double-quotes.
+    """
+    return re.sub(
+        r'(?<=[{,])\s*(\w+)\s*:',
+        lambda m: ' "' + m.group(1) + '":',
+        s,
+    )
+
+
+def _parse_gemma(text: str) -> List[Tuple[str, Dict[str, Any]]]:
+    """Parse ``<|tool_call>call:tool:NAME({...})<tool_call|>`` blocks from *text*.
+
+    Tolerates:
+    - Optional ``call:tool:`` prefix before the tool name.
+    - JS-style unquoted object keys (e.g. ``{path: "."}``)
+      via :func:`_fix_unquoted_keys`.
+    """
+    from tools.registry import TOOL_REGISTRY
+
+    invocations: List[Tuple[str, Dict[str, Any]]] = []
+
+    for match in _GEMMA_BLOCK_RE.finditer(text):
+        body = match.group(1).strip()
+
+        # Strip optional "call:tool:" prefix.
+        body = _GEMMA_PREFIX_RE.sub("", body)
+
+        # Split on first "(" to separate tool name from args.
+        if "(" not in body:
+            logger.warning("[gemma parser] Missing '(' in tool_call body: %r", body)
+            continue
+
+        name, rest = body.split("(", 1)
+        name = name.strip()
+
+        if not name:
+            logger.warning("[gemma parser] Empty tool name in body: %r", body)
+            continue
+
+        if name not in TOOL_REGISTRY:
+            logger.warning("[gemma parser] Unknown tool name: %s", name)
+            continue
+
+        if not rest.endswith(")"):
+            logger.warning("[gemma parser] Missing closing ')' in body: %r", body)
+            continue
+
+        json_str = rest[:-1].strip()
+
+        if not json_str:
+            args: Dict[str, Any] = {}
+        else:
+            # First attempt strict JSON; fall back to unquoted-key fixer.
+            try:
+                args = json.loads(json_str)
+            except json.JSONDecodeError:
+                fixed = _fix_unquoted_keys(json_str)
+                try:
+                    args = json.loads(fixed)
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "[gemma parser] Invalid JSON (even after key fix) '%s': %s",
+                        json_str, exc,
+                    )
+                    continue
+
+        if not isinstance(args, dict):
+            logger.warning(
+                "[gemma parser] Args must be a dict, got %s in: %r",
+                type(args).__name__, body,
+            )
+            continue
+
+        invocations.append((name, args))
+        logger.debug("[gemma parser] Parsed: %s args=%s", name, args)
+
+    return invocations
+
+
+# ===========================================================================
 # Registries and public API
 # ===========================================================================
 
@@ -415,6 +587,7 @@ _FORMAT_REGISTRY: Dict[str, Callable[[ToolRegistry], str]] = {
     "ntcode": _format_tools_ntcode,
     "xml": _format_tools_xml,
     "json_block": _format_tools_json_block,
+    "gemma": _format_tools_gemma,
 }
 
 # Maps family name -> parser function
@@ -422,6 +595,7 @@ _PARSER_REGISTRY: Dict[str, Parser] = {
     "ntcode": _parse_ntcode,
     "xml": _parse_xml,
     "json_block": _parse_json_block,
+    "gemma": _parse_gemma,
 }
 
 

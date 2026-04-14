@@ -10,7 +10,8 @@ from tools.git_commit import git_commit_tool
 from tools.git_status import git_status_tool
 from tools.git_diff import git_diff_tool
 from tools.git_log import git_log_tool
-
+from tools.search_web import search_web_tool
+from tools.read_web import read_web_tool
 
 TOOL_REGISTRY: Dict[str, Callable] = {
     "read_file": read_file_tool,
@@ -21,6 +22,8 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "git_status": git_status_tool,
     "git_diff": git_diff_tool,
     "git_log": git_log_tool,
+    "search_web": search_web_tool,
+    "read_web": read_web_tool,
 }
 
 
@@ -55,6 +58,7 @@ def get_full_system_prompt() -> str:
     so repeated calls are cheap.
     """
     from utils.prompt import build_system_prompt
+
     return build_system_prompt()
 
 

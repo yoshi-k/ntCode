@@ -3,3 +3,4 @@ anthropic
 python-dotenv
 httpx
 duckduckgo_search
+trafilatura

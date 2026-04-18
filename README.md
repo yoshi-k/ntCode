@@ -57,13 +57,21 @@ An AI-powered coding assistant that integrates with Claude AI to provide secure 
 
 | Variable | Values | Default | Description |
 |----------|--------|---------|-------------|
+### Configuration
+
+### Environment Variables
+
+| Variable | Values | Default | Description |
+|----------|--------|---------|-------------|
 | `ANTHROPIC_API_KEY` | string | **required** | Your Anthropic API key |
-| `NTCODE_MODEL` | string | `claude-sonnet-4-6` | Claude model to use |
+| `DEFAULT_MODEL` | string | `claude-3-5-sonnet-20241022` | Claude model to use |
 | `NTCODE_DEBUG` | true/false | false | Enable detailed debugging and logging |
 | `NTCODE_VERBOSE` | true/false | false | Enable interactive tool approval |
 | `NTCODE_LOG_CONVERSATIONS` | true/false | true | Enable conversation logging to file |
 | `NTCODE_API_TIMEOUT` | seconds | `60` | Timeout for Anthropic API calls |
 | `NTCODE_SYSTEM_PROMPT_FILE` | path | `system_prompt.md` | Path to the system-prompt stub file (relative to repo root, or absolute). Edit `system_prompt.md` to customise the base instructions, inlined context files, and tool-use format. |
+
+### Execution Modes
 
 ### Execution Modes
 
@@ -135,6 +143,13 @@ NTCODE_LOG_CONVERSATIONS=false python ntCode.py
 | `git_commit` | Commit staged changes with a message or auto-generated one |
 | `git_diff` | Show staged or unstaged diffs, optionally filtered by file |
 | `git_log` | Show commit history, optionally filtered by file |
+
+### Web Operations
+
+| Tool | Description |
+|------|-------------|
+| `search_web` | Search the web using DuckDuckGo |
+| `read_web` | Fetch a webpage and extract its main text content |
 
 ---
 
@@ -269,14 +284,14 @@ See [`bugs.md`](bugs.md) for full details and diagnostic analysis of each issue.
 
 ```
 ntCode/
-├── ntCode.py           # Main application
-├── outline.md          # Project roadmap and ideas
-├── requirements.txt    # Python dependencies
-├── .env.example        # Environment variables template
-├── .gitignore          # Git ignore rules
-├── tests/              # Test suite
-│   └── test_api_key.py
-└── README.md           # This file
+├── frontend/          # TUI and Batch interfaces
+├── tools/             # Tool implementations
+├── utils/             # Backend infrastructure (LLM, security, etc.)
+├── tests/             # Test suite
+├── experiments/       # Experimental scripts
+├── ntCode.py          # Main entry point
+├── README.md          # This file
+└── ...                # Configuration and documentation
 ```
 
 ---

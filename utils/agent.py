@@ -352,6 +352,8 @@ def run_agent(connector: Connector) -> None:
                             mgr.add_user(
                                 f"tool_result({json.dumps(denied_result)})"
                             )
+                            # IMPORTANT: We must notify the connector so the user sees the rejection
+                            connector.send_assistant(f"Tool {name} was rejected by user.")
                             continue
 
                     tool_fn = TOOL_REGISTRY[name]
@@ -366,9 +368,8 @@ def run_agent(connector: Connector) -> None:
                         if DEBUG_MODE:
                             logger.debug("Tool %s result: %s", name, result)
 
-                        mgr.add_user(
-                            f"tool_result({json.dumps(result, ensure_ascii=False)})"
-                        )
+                        tool_result_str = f"tool_result({json.dumps(result, ensure_ascii=False)})"
+                        mgr.add_user(tool_result_str)
 
                     except Exception as exc:  # noqa: BLE001
                         logger.error(
@@ -379,9 +380,8 @@ def run_agent(connector: Connector) -> None:
                             "tool_name": name,
                             "success": False,
                         }
-                        mgr.add_user(
-                            f"tool_result({json.dumps(error_result)})"
-                        )
+                        error_result_str = f"tool_result({json.dumps(error_result)})"
+                        mgr.add_user(error_result_str)
 
             except Exception as exc:  # noqa: BLE001
                 logger.error("Agent inner loop error: %s", exc)

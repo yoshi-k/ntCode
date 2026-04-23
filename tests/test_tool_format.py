@@ -354,6 +354,31 @@ class TestFormatToolsForProvider:
         assert "TOOL" in out
         assert "read_file" in out
 
+    # --- Regression: double-brace bug ----------------------------------------
+    # The XML and json_block prompt headers are plain string literals, NOT
+    # f-strings.  If {{ / }} are used they appear literally in the prompt,
+    # causing models to copy the malformed example instead of valid JSON.
+
+    def test_xml_header_example_has_no_doubled_braces(self):
+        """The <tool_call> example block must contain valid single-brace JSON."""
+        import re
+        out = self._format("openai", "qwen3:1.7b")
+        match = re.search(r"<tool_call>\s*(.+?)\s*</tool_call>", out, re.DOTALL)
+        assert match is not None, "No <tool_call> example found in XML format output"
+        example = match.group(1).strip()
+        assert "{{" not in example, f"XML header example contains '{{{{' (doubled-brace bug): {example!r}"
+        assert "}}" not in example, f"XML header example contains '}}}}' (doubled-brace bug): {example!r}"
+
+    def test_json_block_header_example_has_no_doubled_braces(self):
+        """The ```json example block must contain valid single-brace JSON."""
+        import re
+        out = self._format("openai", "mistral-7b-instruct")
+        match = re.search(r"```(?:json)?\s*(.+?)\s*```", out, re.DOTALL)
+        assert match is not None, "No ```json example found in json_block format output"
+        example = match.group(1).strip()
+        assert "{{" not in example, f"json_block header example contains '{{{{' (doubled-brace bug): {example!r}"
+        assert "}}" not in example, f"json_block header example contains '}}}}' (doubled-brace bug): {example!r}"
+
 
 # ===========================================================================
 # get_parser_for_provider

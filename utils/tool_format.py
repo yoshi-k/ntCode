@@ -233,7 +233,7 @@ You have access to the following tools. To call a tool, output ONLY the
 following block and nothing else on those lines:
 
 <tool_call>
-{{"name": "<tool_name>", "arguments": {{<JSON object of arguments>}}}}
+{"name": "<tool_name>", "arguments": {"param1": "value1", "param2": "value2"}}
 </tool_call>
 
 After receiving the tool result you will get a message that starts with
@@ -335,7 +335,7 @@ You have access to the following tools. To call a tool, output ONLY a fenced
 JSON block and nothing else on those lines:
 
 ```json
-{{"tool": "<tool_name>", "args": {{<JSON object of arguments>}}}}
+{"tool": "<tool_name>", "args": {"param1": "value1", "param2": "value2"}}
 ```
 
 After receiving the tool result you will get a message starting with

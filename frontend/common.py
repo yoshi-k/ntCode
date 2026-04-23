@@ -83,6 +83,13 @@ Available commands:
   /config reset <KEY>          Reset one setting to its startup default
   /config save [file]          Save current config to JSON (default: ntcode_config.json)
   /config load [file]          Load config from JSON file
+
+  Roles:
+  /role                        List available roles
+  /role list                   List available roles
+  /role load <name>            Activate a role by name (or path to .toml)
+  /role show                   Show the currently active role
+  /role unload                 Deactivate the current role, restoring defaults
 """
 
 
@@ -116,6 +123,88 @@ def handle_provider_command(arg: str) -> str:
         return f"\u274c {exc}"
     except Exception as exc:  # noqa: BLE001
         return f"\u274c Failed to switch provider: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# Role command handler  (returns plain text; no print() calls)
+# ---------------------------------------------------------------------------
+
+def handle_role_command(parts: list) -> str:
+    """Handle all /role sub-commands and return a plain-text result string.
+
+    Sub-commands
+    ------------
+    /role  or  /role list        — list all available roles.
+    /role load <name-or-path>    — activate a role.
+    /role show                   — describe the currently active role.
+    /role unload                 — deactivate and restore defaults.
+    """
+    try:
+        from utils.roles import list_roles, load_role, unload_role, get_active_role
+    except ImportError as exc:
+        return f"\u274c Roles subsystem unavailable: {exc}"
+
+    sub = parts[1].lower() if len(parts) > 1 else ""
+
+    # /role  or  /role list
+    if sub in ("", "list"):
+        available = list_roles()
+        if not available:
+            return (
+                "No roles found.  "
+                "Add .toml files to the roles/ directory to define roles."
+            )
+        active = get_active_role()
+        lines = ["Available roles:"]
+        for rname in available:
+            marker = "  ← active" if (active and active.name == rname) else ""
+            lines.append(f"  {rname}{marker}")
+        return "\n".join(lines)
+
+    # /role load <name>
+    if sub == "load":
+        if len(parts) < 3:
+            return "Usage: /role load <name>   (use /role list to see available roles)"
+        name_or_path = parts[2]
+        try:
+            role = load_role(name_or_path)
+            lines = [f"\u2705 Role '{role.name}' loaded.", "", role.summary()]
+            if role.rag_sources:
+                lines.append(
+                    f"\n  RAG: {len(role.rag_sources)} source(s) defined "
+                    "(will be consumed by the RAG subsystem when available)."
+                )
+            return "\n".join(lines)
+        except FileNotFoundError as exc:
+            return f"\u274c {exc}"
+        except ValueError as exc:
+            return f"\u274c Error loading role: {exc}"
+        except Exception as exc:  # noqa: BLE001
+            return f"\u274c Unexpected error loading role: {exc}"
+
+    # /role show
+    if sub == "show":
+        active = get_active_role()
+        if active is None:
+            return (
+                "No role is currently active.  "
+                "Use /role load <name> to activate one."
+            )
+        return active.summary()
+
+    # /role unload
+    if sub == "unload":
+        active = get_active_role()
+        if active is None:
+            return "No role is currently active."
+        rname = active.name
+        unload_role()
+        return f"\u2705 Role '{rname}' unloaded. Defaults restored."
+
+    return (
+        f"Unknown /role sub-command: {sub!r}\n"
+        "Use: /role list | /role load <name> | /role show | /role unload"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +397,15 @@ def dispatch_line(line: str, connector: Connector) -> DispatchOutcome:
         return DispatchOutcome(
             DispatchResult.LOCAL,
             reply=handle_config_command(arg),
+        )
+
+    if name == "/role":
+        # Re-split the original line to get sub-command and optional argument
+        # as separate tokens (parts[0]=/role, parts[1]=sub, parts[2]=name)
+        role_parts = line.strip().split()
+        return DispatchOutcome(
+            DispatchResult.LOCAL,
+            reply=handle_role_command(role_parts),
         )
 
     # --- state-mutating commands forwarded to the agent ---

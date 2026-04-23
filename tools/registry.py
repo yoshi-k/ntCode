@@ -67,11 +67,36 @@ def execute_tool_safely(
 ) -> Dict[str, Any]:
     """
     Safely execute a tool with proper parameter validation and error handling.
+
+    Before dispatching the tool, checks the active role's tool allowlist (if
+    any role is loaded).  Returns a descriptive error dict — rather than raising
+    — so the LLM receives the message and can respond gracefully.
+
     :param name: Tool name for error reporting
     :param tool: Tool function to execute
     :param args: Arguments dictionary from JSON
     :return: Tool execution result
     """
+    # --- Role-based access control ---
+    try:
+        from utils.roles import is_tool_allowed, get_active_role
+        if not is_tool_allowed(name):
+            active = get_active_role()
+            role_name = active.name if active else "unknown"
+            allowed = ", ".join(active.tools) if active and active.tools else "none"
+            logger.warning(
+                "roles: tool '%s' blocked by active role '%s'", name, role_name
+            )
+            return {
+                "error": (
+                    f"Tool '{name}' is not available in the current role "
+                    f"('{role_name}').  Permitted tools: {allowed}."
+                ),
+                "success": False,
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("roles: access-control check failed (%s); proceeding", exc)
+
     try:
         # Get function signature for parameter validation
         sig = inspect.signature(tool)

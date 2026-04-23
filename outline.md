@@ -51,8 +51,8 @@ Store a prioritised task list in a file. The agent works through item #1, then r
 ### Batch Mode
 ntCode reads tasks from a file and works through them deterministically — useful for reproducible automated testing.
 
-### Skills
-Paired system prompts + model endpoints + tool subsets, targeted at specific task domains (e.g. "code reviewer", "debugger", "documenter").
+### Skills (Roles) ✅
+Paired system prompts + model endpoints + tool subsets, targeted at specific task domains. Implemented in `utils/roles.py`; three built-in roles: `developer`, `researcher`, `executive`. Activated via `/role load <name>`, deactivated via `/role unload`. Config overrides are saved and restored on unload. System-prompt file is swapped and the prompt cache invalidated automatically.
 
 ### Tests Before Commit
 The system should run the test suite before any `git commit`, either inline or as a CI/git-action (tests + coverage).
@@ -60,10 +60,8 @@ The system should run the test suite before any `git commit`, either inline or a
 ### Environment Safety
 Automatic backup of files before editing. Restricted-privilege sandbox execution.
 
-### More tools
-Websearch tool search the web
-web tool, read a website
-rag tooling, outmatic memory via rag? 
+### RAG (Retrieval-Augmented Generation)
+Implement long-term memory and large-scale context ingestion via vector embeddings and retrieval tools.
 
 ### Workflow Vision
 ```
@@ -82,6 +80,7 @@ Issue tracker starts as a plain `.md` file; later integrates with a real tracker
 | Bug / issue tracker reader | 🔲 Planned |
 | Internet researcher | 🔲 Planned |
 | MCP abstraction layer | 🔲 Planned |
+| RAG / Knowledge Base tools | 🔲 Planned |
 
 ---
 
@@ -97,6 +96,9 @@ Issue tracker starts as a plain `.md` file; later integrates with a real tracker
 - [ ] Issue tracker integration — read bugs and tasks from an external tracker
 - [ ] Internet research tool
 - [ ] Code analysis / linting integration
+- [ ] Todo lists with rollback/checkpoint support
+- [ ] RAG integration (Vector DB + Embedding tools)
+- [x] Roles/Skills system — `utils/roles.py`, `roles/*.toml`, `/role` command ✅
 
 ### Low Priority
 - [ ] Plugin system — dynamically register custom tools
@@ -111,6 +113,7 @@ Issue tracker starts as a plain `.md` file; later integrates with a real tracker
 
 ### ✅ Completed
 - Security framework (path validation, size limits, traversal protection)
+- Roles/Skills: `utils/roles.py`, built-in developer / researcher / executive roles, `/role` slash-command
 - File operations: read / edit / list
 - Git workflow: status / diff / add / commit / log
 - Frontend ↔ agent split via `Connector`

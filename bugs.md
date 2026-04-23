@@ -47,6 +47,20 @@ This document tracks active bugs and their diagnostic analysis. Check here befor
 
 ## Test Gaps
 
+### Roles subsystem (`utils/roles.py`, `tests/test_roles.py`)
+✅ Covered by `tests/test_roles.py`:
+- `_parse_role_dict()` — minimal role, missing section, empty name, tools list, invalid tools type, config overrides, RAG sources, system_prompt_file validation.
+- `RoleDefinition.allows_tool()` — empty list (all allowed), specific allowlist.
+- `list_roles()` — empty dir, nonexistent dir, multiple roles, broken TOML skipped.
+- `_resolve_role_path()` — by name, case-insensitive, not found, absolute path.
+- `load_role()` / `unload_role()` — activation, config restore, bad config rollback, system-prompt file override/restore.
+- `is_tool_allowed()` — no role active, with allowlist.
+- `handle_role_command()` — all sub-commands via `frontend.common`.
+- `dispatch_line("/role ...")` — LOCAL result returned.
+- `execute_tool_safely()` — blocks disallowed tool, allows permitted tool.
+
+
+
 The following areas have no test coverage and need a `tests/test_conversation_manager.py`:
 
 ### Prompt-caching helpers (`utils/llm.py`)

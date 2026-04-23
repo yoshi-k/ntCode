@@ -94,6 +94,22 @@ never imports LLM or tool internals directly.
 
 ---
 
+## `roles/` – Role definitions
+
+One `.toml` file per role. System-prompt stubs for roles that override the default prompt live under `roles/prompts/`. Loaded and validated by `utils/roles.py`; activated via `/role load <name>` in the TUI or batch frontend.
+
+| File | Description |
+|------|-------------|
+| `developer.toml` | Full-access developer role (all tools allowed, no system-prompt override, `OPENAI_TEMPERATURE=0.5`). |
+| `researcher.toml` | Read-only + web tools (`read_file`, `list_files`, `search_web`, `read_web`); loads `roles/prompts/researcher.md`. |
+| `executive.toml` | Read-only + web tools; concise executive style; loads `roles/prompts/executive.md`. |
+| `prompts/researcher.md` | System-prompt stub for the researcher role. Contains `{{TOOLS}}` placeholder. |
+| `prompts/executive.md` | System-prompt stub for the executive role. Contains `{{TOOLS}}` placeholder. |
+
+**Adding a new role:** create `roles/<name>.toml` with at minimum `[role] name = "<name>"`. See `developer.toml` for a fully-commented template. The `tools` array limits which tools are callable; omit it to allow all tools. Add `system_prompt_file = "roles/prompts/<name>.md"` to supply a custom system prompt.
+
+---
+
 ## `tests/` – Test suite
 
 | File | Description |

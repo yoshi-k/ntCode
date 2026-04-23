@@ -18,7 +18,8 @@ def edit_file_tool(path: str, old_str: str, new_str: str) -> Dict[str, Any]:
         validate_file_access(full_path)
 
         if old_str == "":
-            # Creating/overwriting file
+            # Creating/overwriting file — ensure parent directories exist
+            full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(new_str, encoding="utf-8")
             return {"path": str(full_path), "action": "created_file"}
 

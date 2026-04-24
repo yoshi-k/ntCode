@@ -288,7 +288,9 @@ def test_show_single_key_contains_fields():
 
 def test_show_single_key_marks_changed():
     cfg = _fresh()
-    cfg.set("GIT_TIMEOUT", "999")
+    current = cfg.get("GIT_TIMEOUT")
+    # Set to a value guaranteed different from the (possibly env-overridden) default.
+    cfg.set("GIT_TIMEOUT", str(current + 1))
     output = cfg.show("GIT_TIMEOUT")
     # Check for the asterisk indicating a changed value
     assert "*" in output

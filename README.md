@@ -215,6 +215,51 @@ Saved files are plain JSON and can be edited by hand.  Unknown keys in a file ar
 
 ---
 
+## 🎭 Roles
+
+Roles let you give the agent a focused persona, a restricted toolset, and a custom system prompt — all activated with a single command.
+
+### Using roles
+
+```
+/role                          # list available roles
+/role load developer           # activate the developer role
+/role show                     # show details of the currently active role
+/role unload                   # deactivate and restore defaults
+```
+
+### Built-in roles
+
+| Role | Tools | Description |
+|------|-------|-------------|
+| **developer** | All tools | Full-access developer: file editing, git workflow, and web research. |
+| **researcher** | `read_file`, `list_files`, `search_web`, `read_web` | Read-only file access plus web search. Uses a custom system prompt for research-focused responses. |
+| **executive** | `read_file`, `list_files`, `search_web`, `read_web` | Read-only file access plus web research. Uses a concise, executive-style system prompt. |
+
+### Creating custom roles
+
+1. Create a `.toml` file in the `roles/` directory:
+   ```toml
+   # roles/myrole.toml
+   [role]
+   name = "myrole"
+   description = "A short description of the role."
+   system_prompt_file = "roles/prompts/myrole.md"   # optional
+
+   tools = [                                          # optional — omit to allow all tools
+       "read_file",
+       "list_files",
+       "search_web",
+   ]
+
+   [config]                                           # optional
+   OPENAI_TEMPERATURE = "0.7"
+   ```
+2. (Optional) Add a system-prompt stub in `roles/prompts/myrole.md`. Include `{{TOOLS}}` where you want the tool list injected.
+3. Activate with `/role load myrole`.
+
+---
+
 ## 🔒 Security Features
 
 - **Path Validation** — All file operations restricted to current directory and subdirectories

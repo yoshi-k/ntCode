@@ -86,18 +86,31 @@ def _resolve_file_directives(text: str, base: Path) -> str:
     return _FILE_DIRECTIVE_RE.sub(_replace, text)
 
 
-def _build_tool_block() -> str:
+def _build_tool_block(allowed_tools: list[str] | None = None) -> str:
     """Return the formatted tool-description block for the ``{{TOOLS}}`` placeholder.
 
     Delegates to :func:`utils.tool_format.format_tools_for_provider` so that
     the tool syntax in the system prompt matches what the active model expects.
     The provider and model are read from ``utils.config`` at call time so they
     reflect any runtime provider switch.
+
+    Args:
+        allowed_tools: If provided, only include these tool names in the prompt.
+                       An empty list or None means all tools.
     """
     # Import here to avoid circular imports at module level.
     from tools.registry import TOOL_REGISTRY
     from utils.tool_format import format_tools_for_provider
     import os
+
+    # Filter the tool registry if a role is active with restrictions
+    if allowed_tools:
+        filtered_registry = {
+            name: fn for name, fn in TOOL_REGISTRY.items()
+            if name in allowed_tools
+        }
+    else:
+        filtered_registry = TOOL_REGISTRY
 
     # Determine the active model name.
     # AnthropicLLM uses NTCODE_MODEL / DEFAULT_MODEL; OpenAILLM uses OPENAI_MODEL.
@@ -108,13 +121,19 @@ def _build_tool_block() -> str:
         from utils.config import DEFAULT_MODEL
         model = os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
 
-    return format_tools_for_provider(LLM_PROVIDER, model, TOOL_REGISTRY)
+    return format_tools_for_provider(LLM_PROVIDER, model, filtered_registry)
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(allowed_tools: list[str] | None = None) -> str:
     """Load, resolve, and return the complete system prompt.
 
-    The result is cached; call :func:`invalidate_cache` to force a rebuild.
+    The result is cached *only* when no role-level tool filter is in effect.
+    When a role restricts tools the prompt is rebuilt each time (the cache
+    is bypassed) so that tool additions/removals are reflected immediately.
+
+    Args:
+        allowed_tools: If provided, only include these tool names in the
+                       ``{{TOOLS}}`` section.  Empty list or None means all tools.
 
     Raises
     ------
@@ -122,7 +141,9 @@ def build_system_prompt() -> str:
         If the stub file named by ``SYSTEM_PROMPT_FILE`` does not exist.
     """
     global _cache
-    if _cache is not None:
+
+    # Only use cache when no role-level filter is active.
+    if _cache is not None and not allowed_tools:
         return _cache
 
     stub_path = (BASE_DIR / SYSTEM_PROMPT_FILE).resolve()
@@ -140,10 +161,7 @@ def build_system_prompt() -> str:
     resolved = _resolve_file_directives(stub, BASE_DIR)
 
     # Step 2: inject tool descriptions at the one {{TOOLS}} in the stub.
-    # Any sentinels introduced by _resolve_file_directives (literal {{TOOLS}}
-    # text that came from inlined documentation files) are restored afterwards
-    # so the model sees them as plain text, not as injected tool blocks.
-    tool_block = _build_tool_block()
+    tool_block = _build_tool_block(allowed_tools)
     if "{{TOOLS}}" in resolved:
         resolved = resolved.replace("{{TOOLS}}", tool_block, 1)
     else:
@@ -152,6 +170,8 @@ def build_system_prompt() -> str:
         )
     resolved = resolved.replace(_TOOLS_SENTINEL, "{{TOOLS}}")
 
-    _cache = resolved
-    logger.info("prompt: built (%d chars)", len(_cache))
-    return _cache
+    # Only cache the unfiltered prompt (no active role)
+    if not allowed_tools:
+        _cache = resolved
+    logger.info("prompt: built (%d chars)", len(resolved))
+    return resolved

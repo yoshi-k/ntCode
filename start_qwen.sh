@@ -40,6 +40,7 @@ export LLM_PROVIDER="openai"
 #export OPENAI_BASE_URL="http://${LLAMA_HOST}:${LLAMA_PORT}/v1"
 export OPENAI_BASE_URL="http://192.168.2.126:8080/v1"
 export OPENAI_API_KEY="llama-cpp-no-key"   # any non-empty string
+#export OPENAI_MODEL='unsloth/Qwen3.6-27B-GGUF:UD-Q6_K_XL'
 #export OPENAI_MODEL="Qwen/Qwen3-27B"       # must match the loaded GGUF
 export OPENAI_MODEL="gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf"
 export OPENAI_MAX_TOKENS="0"               # 0 = omit, let server decide

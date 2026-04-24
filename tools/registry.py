@@ -49,17 +49,21 @@ def get_tool_str_representation(tool_name: str) -> str:
     """
 
 
-def get_full_system_prompt() -> str:
+def get_full_system_prompt(allowed_tools: list[str] | None = None) -> str:
     """Return the complete system prompt.
 
     Delegates to :func:`utils.prompt.build_system_prompt`, which loads the
     stub file, resolves ``{{FILE:...}}`` directives, and injects tool
     descriptions into the ``{{TOOLS}}`` placeholder.  The result is cached
     so repeated calls are cheap.
+
+    Args:
+        allowed_tools: If provided, only include these tool names in the
+                       ``{{TOOLS}}`` section.  Empty list or None means all tools.
     """
     from utils.prompt import build_system_prompt
 
-    return build_system_prompt()
+    return build_system_prompt(allowed_tools=allowed_tools)
 
 
 def execute_tool_safely(

@@ -1,6 +1,5 @@
-import httpx
-import trafilatura
 from urllib.parse import urlparse
+
 
 def validate_url(url: str) -> bool:
     """Basic validation to ensure the URL has a valid scheme and netloc."""
@@ -15,6 +14,10 @@ def read_web_tool(url: str) -> dict:
     :param url: The URL of the webpage to read.
     :return: A dictionary containing the extracted text or an error message.
     """
+    # Lazy imports so the tool can be registered without these deps installed.
+    import httpx
+    import trafilatura
+
     if not validate_url(url):
         return {"error": f"Invalid URL: {url}", "success": False}
 

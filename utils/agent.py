@@ -164,8 +164,14 @@ def _handle_control(
     msg: Dict[str, Any],
     mgr: ConversationManager,
     connector: "Connector",
-) -> None:
-    """Execute a control command and publish a status reply via *connector*."""
+) -> bool:
+    """Execute a control command and publish a status reply via *connector*.
+
+    Returns:
+        True if the caller should continue waiting for the next user message.
+        False if the caller should continue the tool-execution loop (e.g. role
+        changes that trigger LLM calls with tool invocations).
+    """
     command = msg.get("command", "")
     payload = msg.get("payload", "") or ""
 
@@ -244,9 +250,211 @@ def _handle_control(
                 "No save points yet. Use /savepoint <name> to create one."
             )
 
+    elif command == "role":
+        # Handle role load/unload/show commands
+        return _handle_role_command(payload, mgr, connector)
+
     else:
         connector.send_assistant(f"\u274c Unknown control command: {command!r}")
         logger.warning("Unknown control command: %s", command)
+
+    return True
+
+
+def _handle_role_command(
+    payload: str,
+    mgr: ConversationManager,
+    connector: "Connector",
+) -> bool:
+    """Handle role load/unload/show commands and rebuild system prompt.
+
+    Returns:
+        True if the caller should continue waiting for the next user message.
+        False if the caller should continue the tool-execution loop (e.g. role
+        changes that trigger LLM calls with tool invocations).
+
+    When a role is loaded or unloaded, the system prompt must be rebuilt
+    with the correct tool list, and the LLM must be notified about the change.
+    """
+    from utils.roles import list_roles, load_role, unload_role, get_active_role
+    from utils.prompt import invalidate_cache
+    from tools.registry import get_full_system_prompt
+
+    parts = payload.split()
+    sub = parts[0].lower() if parts else ""
+
+    # /role (no sub-command) → list available roles
+    if sub in ("", "list"):
+        available = list_roles()
+        if not available:
+            connector.send_assistant(
+                "No roles found.  "
+                "Add .toml files to the roles/ directory to define roles."
+            )
+            return True
+        active = get_active_role()
+        lines = ["Available roles:"]
+        for rname in available:
+            marker = "  ← active" if (active and active.name == rname) else ""
+            lines.append(f"  {rname}{marker}")
+        connector.send_assistant("\n".join(lines))
+        return True
+
+    # /role load <name>
+    if sub == "load":
+        if len(parts) < 2:
+            connector.send_assistant(
+                "\u274c Usage: /role load <name>   "
+                "(use /role list to see available roles)"
+            )
+            return True
+        name_or_path = parts[1]
+        try:
+            role = load_role(name_or_path)
+            # Rebuild the system prompt with the new tool list
+            invalidate_cache()
+            allowed_tools = role.tools if role.tools else None
+            new_system_prompt = get_full_system_prompt(allowed_tools=allowed_tools)
+            # Update the session header with the new system prompt
+            mgr.session_header = SessionHeader(system_prompt=new_system_prompt)
+
+            # Notify the LLM about the role change by adding it to conversation history
+            tool_list = ", ".join(role.tools) if role.tools else "all available tools"
+            role_notification = (
+                f"\u2705 Role '{role.name}' loaded.\n"
+                f"\n"
+                f"You are now operating as the {role.name} role.\n"
+                f"Available tools: {tool_list}\n"
+                f"\n"
+                f"{role.summary()}"
+            )
+            # Add to conversation history so the LLM sees the role change
+            mgr.add_user(role_notification)
+            # Also send to TUI for user visibility
+            connector.send_assistant(role_notification)
+            logger.info("Role '%s' loaded, system prompt rebuilt and LLM notified", role.name)
+
+            # Trigger an LLM call so the assistant can acknowledge the role change
+            # and confirm its new capabilities. This updates the LLM's context
+            # to match the new system prompt.
+            try:
+                mgr.prune_task_messages(MAX_CONVERSATION_LENGTH)
+                assistant_response = execute_llm_call(
+                    conversation=[],
+                    system_override=mgr.system_for_api(),
+                    messages_override=mgr.messages_for_api(),
+                )
+
+                # If the LLM produces a plain response (not a tool call),
+                # add it to the conversation and send to TUI
+                tool_invocations = extract_tool_invocations(assistant_response)
+                if not tool_invocations:
+                    mgr.add_assistant(assistant_response)
+                    connector.send_assistant(
+                        f"\n\u2705 Assistant response:\n{assistant_response}"
+                    )
+                    logger.info("Role '%s' acknowledged by LLM", role.name)
+                    return True
+                else:
+                    # If the LLM tries to call tools immediately, we need to
+                    # continue the tool execution loop. Add the assistant's
+                    # response to the conversation and signal the caller to
+                    # continue with tool execution.
+                    mgr.add_assistant(assistant_response)
+                    logger.info(
+                        "Role '%s' triggered tool calls immediately: %s",
+                        role.name,
+                        [name for name, _ in tool_invocations],
+                    )
+                    return False  # Continue tool loop
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to get LLM acknowledgment for role '%s': %s", role.name, exc)
+                connector.send_assistant(
+                    f"\u274c Failed to notify LLM of role change: {exc}"
+                )
+                return True
+
+        except FileNotFoundError as exc:
+            connector.send_assistant(f"\u274c {exc}")
+            return True
+        except ValueError as exc:
+            connector.send_assistant(f"\u274c Error loading role: {exc}")
+            return True
+        except Exception as exc:  # noqa: BLE001
+            connector.send_assistant(f"\u274c Unexpected error loading role: {exc}")
+            return True
+
+    # /role show
+    if sub == "show":
+        active = get_active_role()
+        if active is None:
+            connector.send_assistant(
+                "No role is currently active.  "
+                "Use /role load <name> to activate one."
+            )
+            return True
+        connector.send_assistant(active.summary())
+        return True
+
+    # /role unload
+    if sub == "unload":
+        active = get_active_role()
+        if active is None:
+            connector.send_assistant("No role is currently active.")
+            return True
+        rname = active.name
+        unload_role()
+        # Rebuild the system prompt without role restrictions
+        invalidate_cache()
+        new_system_prompt = get_full_system_prompt(allowed_tools=None)
+        mgr.session_header = SessionHeader(system_prompt=new_system_prompt)
+
+        # Notify the LLM about the role change
+        role_notification = (
+            f"\u2705 Role '{rname}' unloaded. Defaults restored.\n"
+            f"You now have access to all available tools."
+        )
+        mgr.add_user(role_notification)
+        connector.send_assistant(role_notification)
+        logger.info("Role '%s' unloaded, system prompt rebuilt", rname)
+
+        # Trigger an LLM call to acknowledge the role change
+        try:
+            mgr.prune_task_messages(MAX_CONVERSATION_LENGTH)
+            assistant_response = execute_llm_call(
+                conversation=[],
+                system_override=mgr.system_for_api(),
+                messages_override=mgr.messages_for_api(),
+            )
+
+            tool_invocations = extract_tool_invocations(assistant_response)
+            if not tool_invocations:
+                mgr.add_assistant(assistant_response)
+                connector.send_assistant(
+                    f"\n\u2705 Assistant response:\n{assistant_response}"
+                )
+                logger.info("Role '%s' acknowledged by LLM", rname)
+                return True
+            else:
+                mgr.add_assistant(assistant_response)
+                logger.info(
+                    "Role '%s' triggered tool calls immediately: %s",
+                    rname,
+                    [name for name, _ in tool_invocations],
+                )
+                return False  # Continue tool loop
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to get LLM acknowledgment for role '%s': %s", rname, exc)
+            connector.send_assistant(
+                f"\u274c Failed to notify LLM of role change: {exc}"
+            )
+            return True
+
+    connector.send_assistant(
+        f"\u274c Unknown /role sub-command: {sub!r}\n"
+        "Use: /role list | /role load <name> | /role show | /role unload"
+    )
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +477,12 @@ def run_agent(connector: Connector) -> None:
 
     Exits cleanly when the connector is shut down.
     """
-    system_prompt = get_full_system_prompt()
+    # Determine the active role's tool restrictions (if any)
+    from utils.roles import get_active_role
+    active_role = get_active_role()
+    allowed_tools = active_role.tools if active_role and active_role.tools else None
+
+    system_prompt = get_full_system_prompt(allowed_tools=allowed_tools)
     header = SessionHeader(system_prompt=system_prompt)
     mgr = ConversationManager(header)
 
@@ -289,10 +502,15 @@ def run_agent(connector: Connector) -> None:
 
         # Handle control commands (save / load / reset) before touching the LLM
         if user_msg.get("role") == "control":
-            _handle_control(user_msg, mgr, connector)
-            continue
-
-        mgr.add_user(user_msg["content"])
+            continue_tool_loop = _handle_control(user_msg, mgr, connector)
+            if continue_tool_loop:
+                continue
+            # If _handle_control returned False, it means a role change triggered
+            # an LLM call with tool invocations. We need to continue the tool
+            # execution loop to process those invocations.
+            # Fall through to the tool execution loop below.
+        else:
+            mgr.add_user(user_msg["content"])
 
         # ----------------------------------------------------------------
         # Inner loop: LLM -> tools -> LLM ... until plain reply

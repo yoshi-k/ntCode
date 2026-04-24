@@ -1,4 +1,3 @@
-from duckduckgo_search import DDGS
 from utils.security import validate_file_access
 from utils.config import logger
 
@@ -11,6 +10,10 @@ def search_web_tool(query: str, max_results: int = 5) -> list[dict[str, str]]:
     :param max_results: Maximum number of results to return.
     :return: A list of dictionaries containing 'title', 'snippet', and 'link'.
     """
+    # Lazy import so the tool can be registered without duckduckgo_search
+    # being installed (e.g. in test environments).
+    from duckduckgo_search import DDGS
+
     logger.info(f"Executing search_web_tool with query: '{query}'")
     
     results = []

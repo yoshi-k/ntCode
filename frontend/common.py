@@ -403,10 +403,10 @@ def dispatch_line(line: str, connector: Connector) -> DispatchOutcome:
         # Re-split the original line to get sub-command and optional argument
         # as separate tokens (parts[0]=/role, parts[1]=sub, parts[2]=name)
         role_parts = line.strip().split()
-        return DispatchOutcome(
-            DispatchResult.LOCAL,
-            reply=handle_role_command(role_parts),
-        )
+        # Send role commands to the agent so it can rebuild the system prompt
+        # and notify the LLM about the role change
+        connector.send_control("role", " ".join(role_parts[1:]))
+        return DispatchOutcome(DispatchResult.CONTROL)
 
     # --- state-mutating commands forwarded to the agent ---
     if name == "/reset":

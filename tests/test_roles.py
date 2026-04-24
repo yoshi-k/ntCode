@@ -457,7 +457,7 @@ def test_handle_role_unknown_sub():
 # ---------------------------------------------------------------------------
 
 def test_dispatch_line_role_command(tmp_path, monkeypatch):
-    """dispatch_line("/role list") returns LOCAL with reply text."""
+    """dispatch_line("/role list") returns CONTROL (sent to agent for processing)."""
     import utils.roles as roles_mod
     monkeypatch.setattr(roles_mod, "_ROLES_DIR", tmp_path)
     _write_toml(tmp_path / "r.toml", "[role]\nname = 'r'\n")
@@ -469,8 +469,9 @@ def test_dispatch_line_role_command(tmp_path, monkeypatch):
     outcome = dispatch_line("/role list", connector)
     connector.shutdown()
 
-    assert outcome.result == DispatchResult.LOCAL
-    assert "r" in outcome.reply
+    # Role commands are forwarded to the agent via the connector so it can
+    # rebuild the system prompt if a role is loaded/unloaded.
+    assert outcome.result == DispatchResult.CONTROL
 
 
 # ---------------------------------------------------------------------------

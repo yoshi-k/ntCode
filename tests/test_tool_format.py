@@ -363,7 +363,10 @@ class TestFormatToolsForProvider:
         """The <tool_call> example block must contain valid single-brace JSON."""
         import re
         out = self._format("openai", "qwen3:1.7b")
-        match = re.search(r"<tool_call>\s*(.+?)\s*</tool_call>", out, re.DOTALL)
+        # Match ONLY the first example block (the one in the header),
+        # stopping at the first "</tool_call>" to avoid greedily consuming
+        # tool-schema JSON later in the output.
+        match = re.search(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", out)
         assert match is not None, "No <tool_call> example found in XML format output"
         example = match.group(1).strip()
         assert "{{" not in example, f"XML header example contains '{{{{' (doubled-brace bug): {example!r}"
@@ -373,7 +376,9 @@ class TestFormatToolsForProvider:
         """The ```json example block must contain valid single-brace JSON."""
         import re
         out = self._format("openai", "mistral-7b-instruct")
-        match = re.search(r"```(?:json)?\s*(.+?)\s*```", out, re.DOTALL)
+        # Match ONLY the first ```json block (the example in the header)
+        # to avoid greedily consuming tool-schema JSON later in the output.
+        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", out)
         assert match is not None, "No ```json example found in json_block format output"
         example = match.group(1).strip()
         assert "{{" not in example, f"json_block header example contains '{{{{' (doubled-brace bug): {example!r}"

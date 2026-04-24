@@ -116,26 +116,36 @@ def _detect_family(provider: str, model: str) -> str:
 # ntcode format  (default)
 # ===========================================================================
 
+_NTCODE_TOOL_PROMPT_HEADER = """\
+You have access to the following tools. To call a tool, output ONLY a line
+in the following format and nothing else on that line:
+
+    tool: TOOL_NAME({"param1": "value1", "param2": "value2"})
+
+Examples:
+    tool: read_file({"filename": "README.md"})
+    tool: list_files({"path": "."})
+    tool: edit_file({"path": "file.txt", "old_str": "", "new_str": "hello"})
+    tool: git_status({})
+
+Rules:
+- Output ONLY the tool call line — no prose before or after on that line.
+- Arguments must be a valid JSON object (keys and string values double-quoted).
+- If the tool takes no arguments use an empty object: {}.
+- After receiving a tool_result(...) message, continue the task normally.
+- If no tool is needed, respond normally.
+
+Available tools:
+"""
+
+
 def _format_tools_ntcode(tool_registry: ToolRegistry) -> str:
     """Return the {{TOOLS}} block for the ntCode text protocol.
 
-    Example output for one tool::
-
-        TOOL
-        ===
-
-            Name: read_file
-            Description:
-            Gets the full content of a file provided by the user.
-            ...
-            Signature: (filename: str) -> Dict[str, Any]
-
-        ===============
-
-    This is the original format; it is reproduced here so all formats live
-    in one place and the prompt builder has a single call site.
+    Produces a header that explains the ``tool: NAME({...})`` syntax followed
+    by a name/description/signature block for each registered tool.
     """
-    parts: list[str] = []
+    parts: list[str] = [_NTCODE_TOOL_PROMPT_HEADER]
     for name, fn in tool_registry.items():
         block = f"""
     Name: {name}

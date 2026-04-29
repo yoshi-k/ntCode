@@ -81,7 +81,7 @@ def memory_store_tool(
 
     logger.info("memory_store_tool: stored key=%r at %s", key, filename)
     return {
-        "stored": str(filename.relative_to(Path.cwd())),
+        "stored": str(filename),
         "key": key,
         "tags": tags,
         "timestamp": timestamp.isoformat(),

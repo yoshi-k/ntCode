@@ -12,6 +12,10 @@ from tools.git_diff import git_diff_tool
 from tools.git_log import git_log_tool
 from tools.search_web import search_web_tool
 from tools.read_web import read_web_tool
+from tools.search_codebase import search_codebase_tool
+from tools.memory_store import memory_store_tool
+from tools.memory_search import memory_search_tool
+from tools.memory_list import memory_list_tool
 
 TOOL_REGISTRY: Dict[str, Callable] = {
     "read_file": read_file_tool,
@@ -24,6 +28,10 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "git_log": git_log_tool,
     "search_web": search_web_tool,
     "read_web": read_web_tool,
+    "search_codebase": search_codebase_tool,
+    "memory_store": memory_store_tool,
+    "memory_search": memory_search_tool,
+    "memory_list": memory_list_tool,
 }
 
 

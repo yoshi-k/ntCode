@@ -27,6 +27,16 @@ with `ntCode.py` as a thin entry-point shim.
 
 ---
 
+## `storage/` – Persistent agent memory
+
+Holds data that the agent writes and reads across sessions.  All paths are inside `cwd` and therefore within the security sandbox.
+
+| Path | Description |
+|------|-------------|
+| `storage/memory/` | Created on first `memory_store` call. Contains one `<key>_<timestamp>.md` file per stored memory. Files have a YAML-ish frontmatter block (`timestamp`, `tags`, `key`) followed by the memory body in plain Markdown. Human-readable and inspectable at any time. Git-tracked by default — add `storage/memory/` to `.gitignore` if you prefer not to commit memories. |
+
+---
+
 ## `utils/` – Backend infrastructure
 
 Shared low-level modules that every other layer depends on.
@@ -54,7 +64,7 @@ All tools import security and config helpers from `utils/`; none import from `fr
 
 | File | Description |
 |------|-------------|
-| `__init__.py` | Re-exports all eight `*_tool` symbols so other modules can import from `tools` as a single namespace. |
+| `__init__.py` | Re-exports all `*_tool` symbols so other modules can import from `tools` as a single namespace. Currently exports 13 tools. |
 | `registry.py` | Central tool registry and dispatcher. `TOOL_REGISTRY` maps tool names to their functions. `get_tool_str_representation()` formats one tool's name/description/signature for the prompt. `get_full_system_prompt()` delegates to `utils.prompt.build_system_prompt()` — it no longer builds the prompt itself. `execute_tool_safely()` introspects each tool's signature, fills in defaults for missing parameters, and executes the call inside a try/except. `register_tool()` allows future dynamic registration. |
 | `read_file.py` | `read_file_tool(filename)` – validates the path, checks the 10 MB size limit, and reads the file with UTF-8 / latin-1 fallback. |
 | `list_files.py` | `list_files_tool(path)` – validates the path, iterates the directory, and returns a list of `{filename, type}` dicts (only entries that pass `validate_file_access` are included). |
@@ -66,6 +76,10 @@ All tools import security and config helpers from `utils/`; none import from `fr
 | `git_log.py` | `git_log_tool(max_entries, file_path)` – runs `git log` with a structured format string, parses each entry into `{hash, author, date, message}` dicts, and returns count metadata including whether more history exists. |
 | `search_web.py` | `search_web_tool(query, max_results)` – searches the web using DuckDuckGo. |
 | `read_web.py` | `read_web_tool(url)` – fetches a webpage and extracts its main text content. |
+| `search_codebase.py` | `search_codebase_tool(query, path, glob, case_sensitive, max_results)` – regex/keyword search over file contents. Walks the directory tree, skips binary files, returns `{file, line, text}` matches with truncation guard. Zero new dependencies. |
+| `memory_store.py` | `memory_store_tool(key, content, tags)` – writes a tagged Markdown memory file to `storage/memory/`. Filename encodes key + timestamp so repeated calls with the same key produce distinct files. Key must be alphanumeric + hyphens/underscores. |
+| `memory_search.py` | `memory_search_tool(query, tags, max_results)` – keyword/regex search across `storage/memory/*.md`. Optionally filters by tag. Returns newest-first results with key, timestamp, tags, and a body snippet. Returns empty result (not error) if the memory directory does not yet exist. |
+| `memory_list.py` | `memory_list_tool(tag, limit)` – lists stored memories newest-first with optional tag filter. Returns key, timestamp, tags, and a one-line summary of each memory body. Cheap orientation call; use at the start of a new task. |
 
 ---
 
@@ -123,6 +137,7 @@ One `.toml` file per role. System-prompt stubs for roles that override the defau
 | `test_tool_format.py` | Unit tests for `utils/tool_format.py`: `_detect_family()` routing for all supported model families; `_parse_ntcode()`, `_parse_xml()`, and `_parse_json_block()` parsers (happy path, multi-call, prose-ignored, unknown-tool, malformed-JSON, missing-field cases); `format_tools_for_provider()` smoke-tests that each formatter produces the expected key strings; `get_parser_for_provider()` identity checks. All tests offline — no LLM calls. TOOL_REGISTRY patched with a minimal two-tool stub. |
 | `test_openai_llm_parse.py` | Tests for parsing OpenAI-specific tool call formats. |
 | `test_dummy_llm.py` | Tests for the `DummyLLM` implementation. |
+| `test_memory_tools.py` | Unit tests for `memory_store`, `memory_search`, `memory_list`, and `search_codebase`. All memory tests use `tmp_path` to redirect `_MEMORY_DIR` — no real `storage/memory/` files touched. Covers: file creation, key validation, tag filtering, case-insensitivity, empty/missing directory handling, regex errors, binary file skipping, glob filtering, sandbox enforcement. |
 
 ---
 

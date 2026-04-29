@@ -337,7 +337,7 @@ class TestSearchCodebase:
         sub.mkdir()
         (sub / "gamma.py").write_text(
             "# gamma module\nHELLO = 'hello_world'\n", encoding="utf-8")
-        (root / "data.bin").write_bytes(bytes(range(256)))
+        (root / "data.bin").write_bytes(b"\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89" * 100)
         return root
 
     def test_find_function_name(self, tmp_path):

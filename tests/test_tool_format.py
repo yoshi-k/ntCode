@@ -492,6 +492,43 @@ class TestParseGemma:
     def test_no_blocks_returns_empty(self):
         assert self._parse("Just a plain response.") == []
 
+    def test_delimiter_in_json_value(self):
+        """Regression: closing <tool_call|> inside a JSON string value must
+        not prematurely terminate the block match.
+
+        This was the bug reported in tool_fail.json: when the model emitted
+        an edit_file call whose new_str contained the literal text
+        '<tool_call|>', the non-greedy .*? regex stopped at the embedded
+        token instead of the real closing delimiter, truncating the body and
+        triggering the 'Missing closing )' warning.
+        """
+        # Simulated Gemma output where the JSON value contains the closing
+        # delimiter sequence as a literal string.
+        inner = '<tool_call|>'
+        text = (
+            '<|tool_call>call:tool:read_file({"filename": "'
+            + inner
+            + '"})<tool_call|>'
+        )
+        result = self._parse(text)
+        assert result == [("read_file", {"filename": inner})]
+
+    def test_multiline_new_str_with_delimiter_in_value(self):
+        """Regression: multi-line new_str containing <tool_call|> and newlines
+        (the exact pattern from the failing session log) must parse correctly.
+        """
+        import json as _json
+        args = {
+            "path": "utils/tool_format.py",
+            "old_str": "_GEMMA_BLOCK_RE = re.compile(",
+            "new_str": '_GEMMA_BLOCK_RE = re.compile(\n    r"<|tool_call>call:tool:(.*?)\n',
+        }
+        # Build the full Gemma-style tool call string
+        args_json = _json.dumps(args)
+        text = f"<|tool_call>call:tool:read_file({args_json})<tool_call|>"
+        result = self._parse(text)
+        assert result == [("read_file", args)]
+
     def test_actual_gemma4_output(self):
         """Regression test using the exact output captured from Gemma4."""
         text = '<|tool_call>call:tool:read_file({path: "."})<tool_call|>'

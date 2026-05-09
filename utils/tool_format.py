@@ -490,8 +490,13 @@ def _format_tools_gemma(tool_registry: ToolRegistry) -> str:
 
 # Matches <|tool_call>...<tool_call|> blocks.
 # The body is everything between the two delimiter tokens.
+# We use a negative-lookahead approach ((?:(?!<tool_call\|>).)*) rather than
+# a simple non-greedy .*? so that a closing delimiter token embedded inside
+# a JSON string value (e.g. in new_str) doesn't prematurely terminate the
+# match.  The pattern consumes characters one at a time, stopping only at
+# the real closing <tool_call|> sequence.
 _GEMMA_BLOCK_RE = re.compile(
-    r"<\|tool_call>(.*?)<tool_call\|>",
+    r"<\|tool_call>((?:(?!<tool_call\|>).)*)<tool_call\|>",
     re.DOTALL,
 )
 

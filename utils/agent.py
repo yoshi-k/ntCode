@@ -27,9 +27,9 @@ from utils.config import (
     DEBUG_MODE,
     VERBOSE_MODE,
     MAX_CONVERSATION_LENGTH,
-    LLM_PROVIDER,
     logger,
 )
+from utils import config as cfg_module
 from utils.llm import execute_llm_call, SessionHeader, ConversationManager
 from utils.connector import Connector
 from tools.registry import TOOL_REGISTRY, get_full_system_prompt, execute_tool_safely
@@ -54,26 +54,31 @@ def _default_save_path() -> str:
 def _resolve_active_model() -> str:
     """Return the model name string for the currently active provider."""
     import os
-    if LLM_PROVIDER == "openai":
-        from utils.config import OPENAI_MODEL
-        return OPENAI_MODEL
-    from utils.config import DEFAULT_MODEL
-    return os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
+    if cfg_module.LLM_PROVIDER == "openai":
+        return cfg_module.OPENAI_MODEL
+    return os.environ.get("NTCODE_MODEL", cfg_module.DEFAULT_MODEL)
 
 
 # Parser selected at agent startup based on the active provider/model.
 # Stored at module level so it is chosen once and reused for every turn.
-_active_parser = get_parser_for_provider(LLM_PROVIDER, _resolve_active_model())
+_active_parser = get_parser_for_provider(cfg_module.LLM_PROVIDER, _resolve_active_model())
+
+
+def _refresh_active_parser() -> None:
+    """Refresh the tool-call parser for the current provider/model settings."""
+    global _active_parser
+    _active_parser = get_parser_for_provider(
+        cfg_module.LLM_PROVIDER,
+        _resolve_active_model(),
+    )
 
 
 def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
     """Return list of (tool_name, args) extracted from *text*.
 
-    Delegates to the provider-aware parser selected at import time by
-    :func:`utils.tool_format.get_parser_for_provider`.  The parser is
-    determined once from ``LLM_PROVIDER`` and the active model name so that
-    the correct syntax (ntcode / xml / json_block) is used throughout the
-    session.
+    Delegates to the provider-aware parser selected from the current
+    provider/model settings. The parser is refreshed after role/provider
+    changes so runtime configuration changes do not leave a stale parser.
 
     Lines that do not match the expected format, reference unknown tool names,
     or carry malformed JSON are logged as warnings and silently skipped.
@@ -318,61 +323,18 @@ def _handle_role_command(
             # Update the session header with the new system prompt
             mgr.session_header = SessionHeader(system_prompt=new_system_prompt)
 
-            # Notify the LLM about the role change by adding it to conversation history
+            _refresh_active_parser()
+            connector.set_role_name(role.name)
+
             tool_list = ", ".join(role.tools) if role.tools else "all available tools"
             role_notification = (
                 f"\u2705 Role '{role.name}' loaded.\n"
-                f"\n"
-                f"You are now operating as the {role.name} role.\n"
-                f"Available tools: {tool_list}\n"
-                f"\n"
+                f"Available tools: {tool_list}\n\n"
                 f"{role.summary()}"
             )
-            # Add to conversation history so the LLM sees the role change
-            mgr.add_user(role_notification)
-            # Also send to TUI for user visibility
             connector.send_assistant(role_notification)
-            logger.info("Role '%s' loaded, system prompt rebuilt and LLM notified", role.name)
-
-            # Trigger an LLM call so the assistant can acknowledge the role change
-            # and confirm its new capabilities. This updates the LLM's context
-            # to match the new system prompt.
-            try:
-                mgr.prune_task_messages(MAX_CONVERSATION_LENGTH)
-                assistant_response = execute_llm_call(
-                    conversation=[],
-                    system_override=mgr.system_for_api(),
-                    messages_override=mgr.messages_for_api(),
-                )
-
-                # If the LLM produces a plain response (not a tool call),
-                # add it to the conversation and send to TUI
-                tool_invocations = extract_tool_invocations(assistant_response)
-                if not tool_invocations:
-                    mgr.add_assistant(assistant_response)
-                    connector.send_assistant(
-                        f"\n\u2705 Assistant response:\n{assistant_response}"
-                    )
-                    logger.info("Role '%s' acknowledged by LLM", role.name)
-                    return True
-                else:
-                    # If the LLM tries to call tools immediately, we need to
-                    # continue the tool execution loop. Add the assistant's
-                    # response to the conversation and signal the caller to
-                    # continue with tool execution.
-                    mgr.add_assistant(assistant_response)
-                    logger.info(
-                        "Role '%s' triggered tool calls immediately: %s",
-                        role.name,
-                        [name for name, _ in tool_invocations],
-                    )
-                    return False  # Continue tool loop
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Failed to get LLM acknowledgment for role '%s': %s", role.name, exc)
-                connector.send_assistant(
-                    f"\u274c Failed to notify LLM of role change: {exc}"
-                )
-                return True
+            logger.info("Role '%s' loaded and system prompt rebuilt", role.name)
+            return True
 
         except FileNotFoundError as exc:
             connector.send_assistant(f"\u274c {exc}")
@@ -409,46 +371,16 @@ def _handle_role_command(
         new_system_prompt = get_full_system_prompt(allowed_tools=None)
         mgr.session_header = SessionHeader(system_prompt=new_system_prompt)
 
-        # Notify the LLM about the role change
+        _refresh_active_parser()
+        connector.set_role_name("default")
+
         role_notification = (
             f"\u2705 Role '{rname}' unloaded. Defaults restored.\n"
             f"You now have access to all available tools."
         )
-        mgr.add_user(role_notification)
         connector.send_assistant(role_notification)
         logger.info("Role '%s' unloaded, system prompt rebuilt", rname)
-
-        # Trigger an LLM call to acknowledge the role change
-        try:
-            mgr.prune_task_messages(MAX_CONVERSATION_LENGTH)
-            assistant_response = execute_llm_call(
-                conversation=[],
-                system_override=mgr.system_for_api(),
-                messages_override=mgr.messages_for_api(),
-            )
-
-            tool_invocations = extract_tool_invocations(assistant_response)
-            if not tool_invocations:
-                mgr.add_assistant(assistant_response)
-                connector.send_assistant(
-                    f"\n\u2705 Assistant response:\n{assistant_response}"
-                )
-                logger.info("Role '%s' acknowledged by LLM", rname)
-                return True
-            else:
-                mgr.add_assistant(assistant_response)
-                logger.info(
-                    "Role '%s' triggered tool calls immediately: %s",
-                    rname,
-                    [name for name, _ in tool_invocations],
-                )
-                return False  # Continue tool loop
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to get LLM acknowledgment for role '%s': %s", rname, exc)
-            connector.send_assistant(
-                f"\u274c Failed to notify LLM of role change: {exc}"
-            )
-            return True
+        return True
 
     connector.send_assistant(
         f"\u274c Unknown /role sub-command: {sub!r}\n"

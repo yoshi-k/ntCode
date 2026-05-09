@@ -3,5 +3,7 @@ anthropic
 python-dotenv
 httpx
 duckduckgo_search
+ddgs
 trafilatura
+pytest
 pytest

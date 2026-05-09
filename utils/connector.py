@@ -1,19 +1,20 @@
 """Connector – thread-safe message channel between frontend and agent.
 
-The ``Connector`` is the *only* communication channel between any frontend
-(TUI, GUI, web, etc.) and the agent middleware.  Both sides share one
-``Connector`` instance:
+This module contains **no** UI code.  It communicates exclusively through a
+:class:`~utils.connector.Connector` instance:
 
-* The **frontend** calls :meth:`send_user` to submit a user turn and then
-  calls :meth:`receive_assistant_blocking` to wait for the agent's reply.
-* The **agent** calls :meth:`receive_user_blocking` to wait for the next user
-  message and :meth:`send_assistant` to publish its reply.
+* Reads user messages via :meth:`~utils.connector.receive_user_blocking`.
+* Writes assistant responses via :meth:`~utils.connector.send_assistant`.
 
-Design constraints
-------------------
-* Only plain, JSON-serialisable dicts are stored – no live objects.
-* All public methods are thread-safe.
-* Blocking receives use ``threading.Event`` so there is no busy-wait.
+The TUI (or any other frontend) owns the ``Connector`` and starts
+:func:`run_agent` in a background thread::
+
+    from utils.connector import Connector
+    from utils.agent import run_agent
+
+    connector = Connector()
+    thread = threading.Thread(target=run_agent, args=(connector,), daemon=True)
+    thread.start()
 """
 
 import threading
@@ -58,6 +59,7 @@ class Connector:
         self._approval_resp_event = threading.Event()
 
         self._history: List[Message] = []
+        self._current_role_name: str = "default"
 
         # Set to True by shutdown() to unblock all blocking receivers
         self._shutdown = False
@@ -81,6 +83,20 @@ class Connector:
             else:
                 self._agent_queue.append(msg)
                 self._agent_event.set()
+
+    # ------------------------------------------------------------------
+    # Role Tracking
+    # ------------------------------------------------------------------
+
+    def set_role_name(self, name: str) -> None:
+        """Update the current active role name (used by TUI for prompt display)."""
+        with self._lock:
+            self._current_role_name = name
+
+    def get_role_name(self) -> str:
+        """Return the current active role name."""
+        with self._lock:
+            return self._current_role_name
 
     # ------------------------------------------------------------------
     # Convenience helpers

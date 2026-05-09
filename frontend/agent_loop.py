@@ -36,10 +36,20 @@ from frontend.common import (
 
 
 def _wait_and_print_reply(connector: Connector) -> None:
-    """Block until the agent sends a control-command acknowledgement and print it."""
+    """Block until the agent sends a control-command acknowledgement and print it.
+
+    Drains any additional messages that might have been sent during the
+    command processing (e.g. LLM acknowledgments).
+    """
     msg = connector.receive_assistant_blocking(timeout=10)
     if msg:
         print(f"{ASSISTANT_COLOR}{msg['content']}{RESET_COLOR}")
+
+    while True:
+        extra_msg = connector.receive()
+        if extra_msg is None:
+            break
+        print(f"{ASSISTANT_COLOR}{extra_msg['content']}{RESET_COLOR}")
 
 
 def run_coding_agent_loop() -> None:
@@ -88,7 +98,9 @@ def run_coding_agent_loop() -> None:
             # Read user input
             # ---------------------------------------------------------- #
             try:
-                user_input = input(f"{YOU_COLOR}You:{RESET_COLOR} ").strip()
+                role_name = connector.get_role_name()
+                prompt = "You" if role_name == "default" else f"You [{role_name}]"
+                user_input = input(f"{YOU_COLOR}{prompt}:{RESET_COLOR} ").strip()
             except (KeyboardInterrupt, EOFError):
                 print()  # newline after ^C / ^D
                 break

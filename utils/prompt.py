@@ -31,7 +31,8 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from utils.config import logger, BASE_DIR, SYSTEM_PROMPT_FILE, LLM_PROVIDER
+from utils.config import logger, BASE_DIR
+from utils import config as cfg_module
 
 # Matches {{FILE:some/relative/path.md}}
 _FILE_DIRECTIVE_RE = re.compile(r"\{\{FILE:([^}]+)\}\}")
@@ -114,14 +115,12 @@ def _build_tool_block(allowed_tools: list[str] | None = None) -> str:
 
     # Determine the active model name.
     # AnthropicLLM uses NTCODE_MODEL / DEFAULT_MODEL; OpenAILLM uses OPENAI_MODEL.
-    if LLM_PROVIDER == "openai":
-        from utils.config import OPENAI_MODEL
-        model = OPENAI_MODEL
+    if cfg_module.LLM_PROVIDER == "openai":
+        model = cfg_module.OPENAI_MODEL
     else:
-        from utils.config import DEFAULT_MODEL
-        model = os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
+        model = os.environ.get("NTCODE_MODEL", cfg_module.DEFAULT_MODEL)
 
-    return format_tools_for_provider(LLM_PROVIDER, model, filtered_registry)
+    return format_tools_for_provider(cfg_module.LLM_PROVIDER, model, filtered_registry)
 
 
 def build_system_prompt(allowed_tools: list[str] | None = None) -> str:
@@ -146,7 +145,7 @@ def build_system_prompt(allowed_tools: list[str] | None = None) -> str:
     if _cache is not None and not allowed_tools:
         return _cache
 
-    stub_path = (BASE_DIR / SYSTEM_PROMPT_FILE).resolve()
+    stub_path = (BASE_DIR / cfg_module.SYSTEM_PROMPT_FILE).resolve()
     logger.info("prompt: loading stub from %s", stub_path)
 
     try:

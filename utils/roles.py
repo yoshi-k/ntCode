@@ -272,11 +272,20 @@ def load_role(name_or_path: str) -> RoleDefinition:
     role = _parse_role_dict(data, source_path=str(path))
 
     # ------------------------------------------------------------------
-    # Save current state so unload_role() can restore it
+    # Save current state so unload_role() can restore it.
+    #
+    # If another role is already active, first restore the pre-role state.
+    # Otherwise switching A -> B would save A's overridden values as B's
+    # "defaults", and unloading B would incorrectly restore role A.
     # ------------------------------------------------------------------
     from utils import config as cfg_module  # avoid circular import
     from utils.config_manager import config as cfg_mgr
     from utils.prompt import invalidate_cache
+
+    if _active_role is not None:
+        _restore_config()
+        if _saved_prompt_file is not None:
+            cfg_module.SYSTEM_PROMPT_FILE = _saved_prompt_file
 
     _saved_config_values = {}
     for key in role.config_overrides:

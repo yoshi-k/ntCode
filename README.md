@@ -57,12 +57,6 @@ An AI-powered coding assistant that integrates with Claude AI to provide secure 
 
 | Variable | Values | Default | Description |
 |----------|--------|---------|-------------|
-### Configuration
-
-### Environment Variables
-
-| Variable | Values | Default | Description |
-|----------|--------|---------|-------------|
 | `ANTHROPIC_API_KEY` | string | **required** | Your Anthropic API key |
 | `DEFAULT_MODEL` | string | `claude-3-5-sonnet-20241022` | Claude model to use |
 | `NTCODE_DEBUG` | true/false | false | Enable detailed debugging and logging |
@@ -70,8 +64,7 @@ An AI-powered coding assistant that integrates with Claude AI to provide secure 
 | `NTCODE_LOG_CONVERSATIONS` | true/false | true | Enable conversation logging to file |
 | `NTCODE_API_TIMEOUT` | seconds | `60` | Timeout for Anthropic API calls |
 | `NTCODE_SYSTEM_PROMPT_FILE` | path | `system_prompt.md` | Path to the system-prompt stub file (relative to repo root, or absolute). Edit `system_prompt.md` to customise the base instructions, inlined context files, and tool-use format. |
-
-### Execution Modes
+| `CALLING_CONVENTION` | `auto`\|`ntcode`\|`xml`\|`json_block`\|`gemma` | *(auto)* | Force a specific tool-calling format instead of auto-detecting from the model name. Also accepted as `NTCODE_CALLING_CONVENTION`. |
 
 ### Execution Modes
 
@@ -121,6 +114,14 @@ NTCODE_LOG_CONVERSATIONS=false python ntCode.py
 ```
 - Disables writing to `ntcode.log`
 - Useful for privacy or storage constraints
+
+#### Override Tool-Calling Format
+```bash
+CALLING_CONVENTION=xml python ntCode.py
+```
+- Forces a specific tool-calling convention instead of auto-detecting from the model name
+- Useful when a model uses a non-standard format or auto-detection picks the wrong family
+- Also settable as `NTCODE_CALLING_CONVENTION=xml`
 
 ---
 
@@ -200,6 +201,7 @@ Saved files are plain JSON and can be edited by hand.  Unknown keys in a file ar
 | `OPENAI_BASE_URL` | str | OpenAI-compatible endpoint URL |
 | `OPENAI_API_KEY` | str | OpenAI API key (masked in display) |
 | `OPENAI_MAX_TOKENS` | int | Max tokens for OpenAI responses (0 = server default) |
+| `CALLING_CONVENTION` | str | Tool-calling format: `''`/`auto` = infer from model; `ntcode` \| `xml` \| `json_block` \| `gemma` = force a format |
 | `OPENAI_TEMPERATURE` | float | Sampling temperature for OpenAI (0.0–2.0) |
 | `API_TIMEOUT` | float | LLM API call timeout (seconds) |
 | `GIT_TIMEOUT` | int | Git command timeout (seconds) |
@@ -235,6 +237,33 @@ Roles let you give the agent a focused persona, a restricted toolset, and a cust
 | **developer** | All tools | Full-access developer: file editing, git workflow, and web research. |
 | **researcher** | `read_file`, `list_files`, `search_web`, `read_web` | Read-only file access plus web search. Uses a custom system prompt for research-focused responses. |
 | **executive** | `read_file`, `list_files`, `search_web`, `read_web` | Read-only file access plus web research. Uses a concise, executive-style system prompt. |
+| **researcher** | `read_file`, `list_files`, `search_web`, `read_web` | Read-only file access plus web search. Uses a custom system prompt for research-focused responses. |
+| **executive** | `read_file`, `list_files`, `search_web`, `read_web` | Read-only file access plus web research. Uses a concise, executive-style system prompt. |
+
+### Tool-Calling Format
+
+ntCode auto-detects the correct tool-calling syntax from the model name:
+
+| Family | Syntax | Auto-detected for |
+|--------|--------|-------------------|
+| `ntcode` | `tool: NAME({...})` | Claude, GPT-\*, and all other models (default) |
+| `xml` | `<tool_call>{...}</tool_call>` | Qwen2.5-Instruct, Qwen3 |
+| `json_block` | ` ```json {"tool": ...} ``` ` | Mistral, Mixtral |
+| `gemma` | `<\|tool_call>call:tool:NAME({...})<tool_call\|>` | Gemma 3/4 instruct |
+
+To override auto-detection, set `CALLING_CONVENTION` (or `NTCODE_CALLING_CONVENTION`) to the family name:
+
+```bash
+# In .env:
+CALLING_CONVENTION=xml
+
+# Or on the command line:
+CALLING_CONVENTION=xml python ntCode.py
+```
+
+Setting it to `auto` (or leaving it empty) restores model-name inference.
+
+---
 
 ### Creating custom roles
 
@@ -346,7 +375,7 @@ ntCode/
 1. Fork the repository
 2. Create your feature branch: `git checkout -b feature/my-feature`
 3. Commit your changes: `git commit -m 'Add my feature'`
-4. Push to the branch: `git push origin feature/my-feature`
+4. Push your changes: `git push origin feature/my-feature`
 5. Open a Pull Request
 
 ---

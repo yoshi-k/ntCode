@@ -261,6 +261,8 @@ def handle_config_command(arg: str) -> str:
                     switch_provider(value.strip().lower())
                 except Exception as exc:  # noqa: BLE001
                     result += f"\n  (LLM provider switch: {exc})"
+            if key in {"LLM_PROVIDER", "OPENAI_MODEL", "DEFAULT_MODEL", "CALLING_CONVENTION", "SYSTEM_PROMPT_FILE"}:
+                result += "\n  Agent prompt/parser will refresh before the next LLM call."
             return f"\u2705 {result}"
         except (KeyError, ValueError) as exc:
             return f"\u274c {exc}"

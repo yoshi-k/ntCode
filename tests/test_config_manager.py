@@ -34,7 +34,8 @@ def test_keys_sorted():
 def test_keys_contains_known():
     cfg = _fresh()
     for k in ("DEFAULT_MODEL", "VERBOSE_MODE", "GIT_TIMEOUT",
-              "LLM_PROVIDER", "API_TIMEOUT", "MAX_FILE_SIZE"):
+              "LLM_PROVIDER", "API_TIMEOUT", "MAX_FILE_SIZE",
+              "CALLING_CONVENTION"):
         assert k in cfg.keys()
 
 
@@ -147,6 +148,19 @@ def test_set_provider_invalid_raises():
     cfg = _fresh()
     with pytest.raises(ValueError, match="LLM_PROVIDER"):
         cfg.set("LLM_PROVIDER", "google")
+
+
+@pytest.mark.parametrize("convention", ["", "auto", "ntcode", "xml", "json_block", "gemma"])
+def test_set_calling_convention_valid(convention):
+    cfg = _fresh()
+    cfg.set("CALLING_CONVENTION", convention)
+    assert cfg.get("CALLING_CONVENTION") == convention
+
+
+def test_set_calling_convention_invalid_raises():
+    cfg = _fresh()
+    with pytest.raises(ValueError, match="CALLING_CONVENTION"):
+        cfg.set("CALLING_CONVENTION", "trodel")
 
 
 def test_set_negative_timeout_raises():

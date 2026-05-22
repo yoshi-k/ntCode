@@ -1,8 +1,11 @@
+import logging
 import threading
 import time
 from collections import deque
 
 from utils.config import TOKEN_LIMIT_PER_MINUTE, _RATE_WINDOW_SECONDS
+
+_logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -94,29 +97,12 @@ class TokenRateLimiter:
         """
         # --- Guard: estimate exceeds the hard limit - would hang forever ---
         if estimated_tokens > self.limit:
-            print(
-                f"\n[RateLimiter] \u26a0\ufe0f  Estimated token cost ({estimated_tokens:,}) "
-                f"exceeds the per-minute limit ({self.limit:,}).\n"
-                f"This request cannot fit inside the rate-limit window and would "
-                f"block indefinitely.",
-                flush=True,
+            _logger.warning(
+                "Estimated token cost (%d) exceeds the per-minute limit (%d) - "
+                "auto-proceeding (bypassing limit for this request).",
+                estimated_tokens, self.limit,
             )
-            try:
-                answer = (
-                    input(
-                        "Proceed anyway and bypass the rate limit for this request? [y/N]: "
-                    )
-                    .strip()
-                    .lower()
-                )
-            except (EOFError, KeyboardInterrupt):
-                answer = "n"
-            if answer not in ("y", "yes"):
-                raise RuntimeError(
-                    f"Request aborted: estimated token cost {estimated_tokens:,} "
-                    f"exceeds rate limit {self.limit:,}."
-                )
-            # User chose to proceed - reserve without enforcing the limit.
+            # Reserve without enforcing the limit.
             reservation_id = object()
             with self._lock:
                 entry = [time.monotonic(), estimated_tokens, reservation_id]
@@ -138,11 +124,10 @@ class TokenRateLimiter:
                 wait_sec = self._seconds_until_free(estimated_tokens, now)
 
             # Log outside the lock to avoid blocking other threads.
-            print(
-                f"[RateLimiter] {used}/{self.limit} tokens used in the last "
-                f"{_RATE_WINDOW_SECONDS}s - waiting {wait_sec:.1f}s for "
-                f"{estimated_tokens} tokens of capacity ...",
-                flush=True,
+            _logger.info(
+                "%d/%d tokens used in the last %ds - waiting %.1fs for "
+                "%d tokens of capacity ...",
+                used, self.limit, _RATE_WINDOW_SECONDS, wait_sec, estimated_tokens,
             )
             time.sleep(max(0.5, wait_sec))
 

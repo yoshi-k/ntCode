@@ -41,6 +41,14 @@ ALLOWED_BASE_PATHS = [Path.cwd()]  # Only allow current directory and subdirecto
 # Leave unset (or "anthropic") to use the Anthropic SDK (default).
 LLM_PROVIDER: str = os.environ.get("LLM_PROVIDER", "anthropic").lower().strip()
 
+# Optional explicit override for the textual tool-calling convention.
+# Empty / "auto" means infer from provider + model name in utils.tool_format.
+# Supported explicit values: ntcode, xml, json_block, gemma.
+CALLING_CONVENTION: str = os.environ.get(
+    "CALLING_CONVENTION",
+    os.environ.get("NTCODE_CALLING_CONVENTION", ""),
+).lower().strip()
+
 # OpenAI-compatible settings (Ollama, LM Studio, vLLM, OpenAI, Groq, …)
 # OPENAI_BASE_URL : root URL of the server, e.g. http://localhost:11434/v1
 # OPENAI_API_KEY  : bearer token; local servers accept any non-empty string

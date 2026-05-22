@@ -259,6 +259,12 @@ def _handle_control(
         # Handle role load/unload/show commands
         return _handle_role_command(payload, mgr, connector)
 
+    elif command == "config_changed":
+        # Kept for compatibility with frontends that may send this control
+        # message. The normal agent loop refreshes prompt/parser before every
+        # LLM call, so no action is required here.
+        connector.send_assistant("Configuration will be applied before the next LLM call.")
+
     else:
         connector.send_assistant(f"\u274c Unknown control command: {command!r}")
         logger.warning("Unknown control command: %s", command)
@@ -450,6 +456,20 @@ def run_agent(connector: Connector) -> None:
         while True:
             try:
                 mgr.prune_task_messages(MAX_CONVERSATION_LENGTH)
+
+                # Refresh parser and system prompt every turn so runtime
+                # /config changes such as CALLING_CONVENTION, provider, model,
+                # or prompt file take effect without restarting the agent.
+                from utils.roles import get_active_role
+                from utils.prompt import invalidate_cache
+
+                active_role = get_active_role()
+                allowed_tools = active_role.tools if active_role and active_role.tools else None
+                invalidate_cache()
+                mgr.session_header = SessionHeader(
+                    system_prompt=get_full_system_prompt(allowed_tools=allowed_tools)
+                )
+                _refresh_active_parser()
 
                 assistant_response = execute_llm_call(
                     conversation=[],

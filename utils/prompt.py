@@ -14,9 +14,14 @@ How it works
    the **active provider and model**.  The format is selected by
    :func:`utils.tool_format.format_tools_for_provider`:
 
+   * ``auto``      — infer the format from the active model name.
    * ``ntcode``    — original ``tool: NAME({...})`` protocol (Claude, GPT-*).
    * ``xml``       — ``<tool_call>`` blocks (Qwen2.5-Instruct, Qwen3).
    * ``json_block``— fenced JSON blocks (Mistral, Mixtral).
+   * ``gemma``     — ``<|tool_call>...<tool_call|>`` blocks (Gemma).
+
+Set ``CALLING_CONVENTION`` / ``NTCODE_CALLING_CONVENTION`` to override auto
+routing explicitly.
 
 The result is cached after the first call so that repeated calls (e.g. from
 the ``/prompt`` command and the agent startup) are cheap and always return

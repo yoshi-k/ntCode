@@ -18,6 +18,7 @@ An AI-powered coding assistant that integrates with Claude AI to provide secure 
 - **Comprehensive Logging** — Conversation and operation logging for debugging and audit trails
 - **Conversation Pruning** — Automatically trims history to stay within token limits
 - **API Error Handling** — Graceful recovery from timeouts, rate limits, and connection errors
+- **Dynamic Configuration Refresh** — Changes to provider, model, or calling convention take effect immediately without restarting
 
 ---
 
@@ -206,7 +207,7 @@ Saved files are plain JSON and can be edited by hand.  Unknown keys in a file ar
 | `API_TIMEOUT` | float | LLM API call timeout (seconds) |
 | `GIT_TIMEOUT` | int | Git command timeout (seconds) |
 | `OPENAI_TIMEOUT` | float | OpenAI endpoint timeout (seconds) |
-| `OPENAI_MAX_RETRIES` | int | Max retries for OpenAI endpoint |
+| `OPENAI_MAX_RETRIES` | int | Retries for OpenAI endpoint |
 | `TOKEN_LIMIT_PER_MINUTE` | int | Token rate limit per minute |
 | `MAX_CONVERSATION_LENGTH` | int | Max task-context messages before pruning |
 | `MAX_FILE_SIZE` | int | Max file size in bytes for read/edit |

@@ -80,6 +80,14 @@ def _provider_validator(v):
         )
 
 
+def _calling_convention_validator(v):
+    allowed = {"", "auto", "ntcode", "xml", "json_block", "gemma"}
+    if v not in allowed:
+        raise ValueError(
+            f"CALLING_CONVENTION must be one of {sorted(allowed)!r}, got {v!r}"
+        )
+
+
 def _temperature_validator(v):
     if not isinstance(v, (int, float)) or isinstance(v, bool):
         raise ValueError(f"OPENAI_TEMPERATURE must be a number, got {v!r}")
@@ -126,6 +134,11 @@ _SCHEMA: dict[str, tuple[type, str, Any]] = {
         int,
         "Max tokens for OpenAI responses (0 = let server decide)",
         _must_be_nonneg_int("OPENAI_MAX_TOKENS"),
+    ),
+    "CALLING_CONVENTION": (
+        str,
+        "Tool-calling format override ('auto', 'ntcode', 'xml', 'json_block', 'gemma')",
+        _calling_convention_validator,
     ),
     "OPENAI_TEMPERATURE": (
         float,
@@ -250,7 +263,10 @@ def _coerce(key: str, raw: Any) -> Any:
             raise ValueError(f"Cannot convert {raw!r} to float for '{key}'.")
 
     # str
-    return str(raw)
+    value = str(raw)
+    if key in {"LLM_PROVIDER", "CALLING_CONVENTION"}:
+        return value.lower().strip()
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +302,7 @@ class ConfigManager:
             "OPENAI_BASE_URL":        _cfg.OPENAI_BASE_URL,
             "OPENAI_API_KEY":         _cfg.OPENAI_API_KEY,
             "OPENAI_MAX_TOKENS":      int(_cfg.OPENAI_MAX_TOKENS),
+            "CALLING_CONVENTION":     _cfg.CALLING_CONVENTION,
             "OPENAI_TEMPERATURE":     float(_cfg.OPENAI_TEMPERATURE),
             "API_TIMEOUT":            float(_cfg.API_TIMEOUT),
             "GIT_TIMEOUT":            int(_cfg.GIT_TIMEOUT),
@@ -400,7 +417,8 @@ class ConfigManager:
         groups = [
             ("LLM / Provider",   ["LLM_PROVIDER", "DEFAULT_MODEL", "ANTHROPIC_API_KEY",
                                    "OPENAI_MODEL", "OPENAI_BASE_URL", "OPENAI_API_KEY",
-                                   "OPENAI_MAX_TOKENS", "OPENAI_TEMPERATURE"]),
+                                   "OPENAI_MAX_TOKENS", "CALLING_CONVENTION",
+                                   "OPENAI_TEMPERATURE"]),
             ("Timeouts",         ["API_TIMEOUT", "GIT_TIMEOUT", "OPENAI_TIMEOUT",
                                    "OPENAI_MAX_RETRIES"]),
             ("Rate limiting",    ["TOKEN_LIMIT_PER_MINUTE"]),

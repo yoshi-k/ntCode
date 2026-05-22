@@ -19,6 +19,8 @@ import json
 from typing import Any, Dict
 from unittest.mock import patch
 
+import utils.config as cfg_module
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -57,7 +59,8 @@ class TestDetectFamily:
 
     def _call(self, provider: str, model: str) -> str:
         from utils.tool_format import _detect_family
-        return _detect_family(provider, model)
+        with patch.object(cfg_module, "CALLING_CONVENTION", ""):
+            return _detect_family(provider, model)
 
     # ---- Anthropic Claude -------------------------------------------------
     def test_claude_sonnet(self):
@@ -99,6 +102,22 @@ class TestDetectFamily:
         # Detection must be case-insensitive
         assert self._call("openai", "QWEN3-32B") == "xml"
 
+    # ---- DeepSeek -----------------------------------------------------------
+    # DeepSeek models (v3, v4, R1, etc.) emit <tool_call>...</tool_call> blocks
+    # when prompted correctly, same as Qwen.
+    def test_deepseek_v4_pro(self):
+        assert self._call("openai", "deepseek/deepseek-v4-pro") == "xml"
+
+    def test_deepseek_v3(self):
+        assert self._call("openai", "deepseek/deepseek-v3") == "xml"
+
+    def test_deepseek_r1(self):
+        assert self._call("openai", "deepseek-r1") == "xml"
+
+    def test_deepseek_uppercase(self):
+        # Detection must be case-insensitive
+        assert self._call("openai", "DEEPSEEK-V4-PRO") == "xml"
+
     # ---- Mistral / Mixtral --------------------------------------------------
     def test_mistral_7b(self):
         assert self._call("openai", "mistral-7b-instruct") == "json_block"
@@ -108,6 +127,17 @@ class TestDetectFamily:
 
     def test_mistral_large(self):
         assert self._call("openai", "mistral-large-latest") == "json_block"
+
+    @pytest.mark.parametrize("convention", ["ntcode", "xml", "json_block", "gemma"])
+    def test_calling_convention_override_wins(self, convention):
+        from utils.tool_format import _detect_family
+        with patch.object(cfg_module, "CALLING_CONVENTION", convention):
+            assert _detect_family("openai", "some-unknown-model") == convention
+
+    def test_calling_convention_auto_uses_model_detection(self):
+        from utils.tool_format import _detect_family
+        with patch.object(cfg_module, "CALLING_CONVENTION", "auto"):
+            assert _detect_family("openai", "Qwen/Qwen3-27B") == "xml"
 
 
 # ===========================================================================

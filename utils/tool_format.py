@@ -84,16 +84,29 @@ Parser = Callable[[str], List[Tuple[str, Dict[str, Any]]]]
 def _detect_family(provider: str, model: str) -> str:
     """Return the tool-format family name for the given provider/model pair.
 
-    The detection is purely based on the model name string (lowercased).
-    Add new patterns here when you add a new format.
+    If ``CALLING_CONVENTION`` is set to an explicit value, it wins.  Empty or
+    ``"auto"`` means infer from the model name string (lowercased), preserving
+    the historical hard-coded routing.
 
     Returns one of: ``"ntcode"``, ``"xml"``, ``"json_block"``, ``"gemma"``.
     """
+    from utils import config as cfg_module
+
+    override = getattr(cfg_module, "CALLING_CONVENTION", "").lower().strip()
+    if override and override != "auto":
+        if override in _FORMAT_REGISTRY and override in _PARSER_REGISTRY:
+            return override
+        logger.warning(
+            "[tool_format] Unknown CALLING_CONVENTION=%r; falling back to auto",
+            override,
+        )
+
     m = model.lower()
 
-    # Qwen2.5-Instruct and Qwen3 models emit <tool_call>...</tool_call> blocks
-    # when prompted correctly (documented in the Qwen model cards).
-    if "qwen" in m:
+    # Qwen2.5-Instruct, Qwen3, and DeepSeek (v3, v4, R1, etc.) models emit
+    # <tool_call>...</tool_call> blocks when prompted correctly.
+    # DeepSeek models accessed via OpenRouter follow the same convention.
+    if "qwen" in m or "deepseek" in m:
         return "xml"
 
     # Mistral-Nemo and some Mistral-7B fine-tunes use JSON blocks.

@@ -7,10 +7,12 @@ from .git_status import git_status_tool
 from .git_diff import git_diff_tool
 from .git_log import git_log_tool
 from .search_web import search_web_tool
+from .read_web import read_web_tool
 from .search_codebase import search_codebase_tool
 from .memory_store import memory_store_tool
 from .memory_search import memory_search_tool
 from .memory_list import memory_list_tool
+from .rollback_file import rollback_file_to_path, list_backups_tool
 
 __all__ = [
     "read_file_tool",
@@ -22,8 +24,11 @@ __all__ = [
     "git_diff_tool",
     "git_log_tool",
     "search_web_tool",
+    "read_web_tool",
     "search_codebase_tool",
     "memory_store_tool",
     "memory_search_tool",
     "memory_list_tool",
+    "rollback_file_to_path",
+    "list_backups_tool",
 ]

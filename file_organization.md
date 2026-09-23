@@ -15,15 +15,14 @@ with `ntCode.py` as a thin entry-point shim.
 | `agent.md` | **Start here** — high-level project orientation for agents and new contributors. Links to all key documents and explains the architecture in one sentence. |
 | `outline.md` | Strategy, architecture vision, planned features, and implementation-status summary. The place to capture decisions and future direction. |
 | `bugs.md` | Known bugs with diagnostic analysis, likely root causes, and next immediate actions. Check before starting any work. |
-| `decouplingStrategy.md` | Step-by-step refactoring plan used to break the original monolith apart. Describes the target directory layout, the ten extraction steps, dependency rules, and key gotchas. Now largely complete but kept as architectural reference. |
 | `README.md` | Full usage guide: quick-start, configuration, execution modes, available tools, security features, usage examples, and known issues. The authoritative reference for running and using ntCode. |
 | `requirements.txt` | Python package dependencies (anthropic, python-dotenv, etc.). |
 | `.env.example` | Template showing all supported environment variables with example values. Copy to `.env` and fill in `ANTHROPIC_API_KEY` before running. |
 | `ntcode.log` | Runtime log file written by the application (git-ignored). Contains conversation history, tool executions, API timing, and token-usage data. |
 | `start_qwen.sh` | Shell script to run ntCode against a local Qwen model. Sets `LLM_PROVIDER=openai` and the `OPENAI_*` variables to route via `OpenAIChatProvider` (native tool calling) to a llama.cpp server on `nt-angband.local`. Use instead of the default Anthropic backend when running against a local model. |
-| `instruct1.txt` | Ad-hoc instruction file containing a short user prompt (e.g. a task to run on startup). Not part of the main application — used for one-off experiments and manual testing. |
-| `out1.json` / `out2.json` | Ephemeral JSON output files produced during development and experiments (git-ignored via `out*.json`). Not part of the main application. |
 | `test_api_key.py` | Standalone script that smoke-tests the Anthropic API key and model name configured in `.env`. |
+| `run_tests.sh` | Runs the test suite with `pytest -v --tb=short tests/` from the repo root. |
+| `bootstrap_roles.py` | One-time script that creates `roles/` with the starter roles (`developer`, `researcher`, `executive`) and their prompt stubs. Safe to re-run: existing files are not overwritten. |
 
 ---
 
@@ -79,6 +78,7 @@ Contains no tool logic, no UI, and no LLM call-site code beyond the provider abs
 | `llm.py` | Active provider and conversation state. `llm` is the active `providers.base.Provider`, always built from the configuration by `_build_llm()`: `AnthropicProvider` for Claude, `OpenAIChatProvider` for OpenAI-compatible endpoints, wrapped in `TextToolsProvider` when `CALLING_CONVENTION` names a text dialect. `rebuild_provider()` rebuilds it after a change to one of `PROVIDER_KEYS` (called by `/config set` and roles); `switch_provider()` (`/provider`) writes provider, model and URL into the configuration and rebuilds. `SessionHeader` holds the system prompt and documentation files (`system_with_docs()`); `ConversationManager` stores the task conversation as `core.types.Message`s with pair-safe pruning, save/load and save points. `system_prompt_for_display()` backs `/prompt`. |
 | `dummy_llm.py` | `DummyProvider` — a file-replay `Provider` for tests and offline development. Returns one line of a plain-text replay file per `complete()` call (non-blank, non-comment lines, cycling), parsed with the `ntcode` dialect so `tool: NAME({...})` lines become real `ToolCall`s. |
 | `config_manager.py` | `ConfigManager` class and module-level `config` singleton. Owns all mutable runtime settings as a typed dict, validated against a schema. `get(key)` / `set(key, value)` (type coercion from strings + validation) / `reset(key=None)` / `show(key=None)` (grouped display with change markers `*`) / `save(path)` / `load(path)` (JSON round-trip; skips unknown keys, reports per-key errors). Mirrors every change back into `utils.config` module-level names so legacy call-sites stay in sync. Sensitive keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are masked in display. Initialised from `utils.config` at import time so all env-var overrides are preserved. |
+| `roles.py` | Role subsystem: parses `roles/*.toml` (`[role]` name, description, `system_prompt_file`, `tools` allowlist; `[config]` overrides), `load_role()` / `unload_role()` apply and restore config overrides and the prompt file and rebuild the provider when a provider setting changed, `is_tool_allowed()` backs the role tool allowlist in `execute_tool_safely()`. |
 
 ---
 
@@ -129,21 +129,23 @@ never imports LLM or tool internals directly.
 | `connector.py` | Backward-compatibility shim. Re-exports `Connector` and `Message` from `utils.connector` so any code importing `from frontend.connector import Connector` continues to work. |
 | `agent_loop.py` | TUI frontend. `run_coding_agent_loop()` prints the welcome banner, instantiates a `Connector`, starts `run_agent()` in a daemon background thread, then runs the `input()` / `print()` REPL loop. Forwards user input via `connector.send_user()` and blocks on `connector.receive_assistant_blocking()` for replies. Handles `KeyboardInterrupt` / `EOFError` gracefully and calls `connector.shutdown()` on exit. |
 | `batch_loop.py` | Batch frontend. `run_batch_loop(infile, outfile)` reads a plain-text instruction file (one prompt per non-blank, non-comment line), instantiates a `Connector`, starts `run_agent()` in a daemon background thread, and processes each instruction sequentially, writing structured output (`=== [N] You: … ===` / response / blank line) to `outfile`. Slash-commands (`/reset`, `/save`, `/savepoint`, `/restore`, etc.) are handled via `dispatch_line()` from `common.py`, so the full command set works identically to the TUI. In `VERBOSE_MODE`, tool-approval requests are auto-approved with a log warning. Invoked via `python ntCode.py --batch infile.txt --out outfile.txt`. |
+| `todo_loop.py` | Todo frontend (`--todo`): reads a Markdown file of `# TODO:` tasks, each optionally with a `## Role:`, and runs them one after another with a fresh context per task, writing results to the output file. |
+| `task_loop.py` | Unified batch/todo runner (both input formats in one loop), intended to replace `batch_loop.py` and `todo_loop.py`; `ntCode.py` does not use it yet. |
 | `common.py` | Shared frontend logic used by both the TUI and batch frontends. Exports: `ERROR_PREFIXES` / `is_error_response()` — detect provider-level error sentinels; `HELP_TEXT` — the `/help` string; `handle_provider_command()` — handles `/provider` sub-commands and returns plain text; `handle_config_command()` — handles all `/config` sub-commands (`set`, `reset`, `save`, `load`, `help`) by delegating to `utils.config_manager.config` and returning plain text (no connector round-trip needed); `DispatchResult` enum (`QUIT`, `LOCAL`, `CONTROL`, `USER`) and `DispatchOutcome` dataclass — describe what `dispatch_line()` did; `dispatch_line(line, connector)` — the central input router that handles all slash-commands (`/help`, `/tools`, `/prompt`, `/provider`, `/config`, `/reset`, `/save`, `/load`, `/savepoint`, `/restore`, `/savepoints`, `/quit`) and forwards plain user messages to the agent. Contains no `print()`, `input()`, or ANSI colour code. |
 
 ---
 
 ## `roles/` – Role definitions
 
-One `.toml` file per role. System-prompt stubs for roles that override the default prompt live under `roles/prompts/`. Loaded and validated by `utils/roles.py`; activated via `/role load <name>` in the TUI or batch frontend.
+Created by `python bootstrap_roles.py` (not tracked in git). One `.toml` file per role. System-prompt stubs for roles that override the default prompt live under `roles/prompts/`. Loaded and validated by `utils/roles.py`; activated via `/role load <name>` in the TUI or batch frontend.
 
 | File | Description |
 |------|-------------|
 | `developer.toml` | Full-access developer role (all tools allowed, no system-prompt override, `OPENAI_TEMPERATURE=0.5`). |
 | `researcher.toml` | Read-only + web tools (`read_file`, `list_files`, `search_web`, `read_web`); loads `roles/prompts/researcher.md`. |
 | `executive.toml` | Read-only + web tools; concise executive style; loads `roles/prompts/executive.md`. |
-| `prompts/researcher.md` | System-prompt stub for the researcher role. Contains `{{TOOLS}}` placeholder. |
-| `prompts/executive.md` | System-prompt stub for the executive role. Contains `{{TOOLS}}` placeholder. |
+| `prompts/researcher.md` | System-prompt stub for the researcher role. Its `{{TOOLS}}` placeholder becomes the tools note; tool definitions come from the provider. |
+| `prompts/executive.md` | System-prompt stub for the executive role. Its `{{TOOLS}}` placeholder becomes the tools note; tool definitions come from the provider. |
 
 **Adding a new role:** create `roles/<name>.toml` with at minimum `[role] name = "<name>"`. See `developer.toml` for a fully-commented template. The `tools` array limits which tools are callable; omit it to allow all tools. Add `system_prompt_file = "roles/prompts/<name>.md"` to supply a custom system prompt.
 
@@ -158,6 +160,8 @@ One `.toml` file per role. System-prompt stubs for roles that override the defau
 | `test_security.py` | Tests for `validate_file_access()` and `resolve_abs_path()` in `utils/security.py`: verifies that paths inside `cwd` are allowed, that paths outside it raise `PermissionError`, and that `..` traversal attempts are blocked. Also contains integration tests for `read_file_tool` and `edit_file_tool` checking that security boundaries are enforced end-to-end. Imports directly from `utils.security` and `tools.*` (no `ntCode.py` shim). |
 | `test_basic.py` | Smoke tests for path handling, `read_file_tool` and `list_files_tool`. |
 | `test_config_manager.py` | Unit and integration tests for `utils/config_manager.py`: get/set/reset for all key types, type coercion from strings, validation (provider enum, positive int/float, temperature range, non-empty str), masked display of sensitive keys, save/load JSON round-trip (creates files, preserves values, skips unknown keys, reports per-key validation errors), and `_sync_to_config` (verifies that `utils.config` module-level constants are updated after set/reset). |
+| `test_roles.py` | Tests for `utils/roles.py`: TOML parsing and validation, role listing and path resolution, load/unload with config restore, prompt-file override, tool allowlist, and the `/role` commands. |
+| `test_e2e_dummy.py` | End-to-end run through `Connector` and `run_agent` with `DummyProvider`: a `tool:` reply runs the real `list_files` tool and the final reply reaches the frontend. |
 | `test_dummy_llm.py` | Tests for `DummyProvider`: replay order, cycling, reload, comments, `tool:` lines becoming `ToolCall`s, the shipped replay file. |
 | `test_memory_tools.py` | Unit tests for `memory_store`, `memory_search`, `memory_list`, and `search_codebase`. All memory tests use `tmp_path` to redirect `_MEMORY_DIR` — no real `storage/memory/` files touched. Covers: file creation, key validation, tag filtering, case-insensitivity, empty/missing directory handling, regex errors, binary file skipping, glob filtering, sandbox enforcement. |
 | `conftest.py` | Autouse fixture that snapshots and restores global runtime state (`utils.config` constants, `ConfigManager` values, active LLM, parser and role) around every test, so results do not depend on test order. |
@@ -195,32 +199,38 @@ Contains experimental code and scripts not yet part of the main application.
 
 ## Documentation Files
 
-All `.md` files live at the root. See the Root table above for `README.md`, `outline.md`, `decouplingStrategy.md`, and `file_organization.md`.
+All `.md` files live at the root. See the Root table above for `README.md`, `agent.md`, `outline.md`, `bugs.md` and `file_organization.md`.
 
 | File | Description |
 |------|-------------|
 | `gitWorkflow.md` | Git workflow guidelines: branching strategy, commit conventions, and PR process. |
 | `gitTesting.md` | Guidelines for git-related testing: how to verify git tool behaviour and write git-touching tests. |
-| `prompt_doc.md` | **Prompt architecture reference.** Explains how `system_prompt.md` is assembled (stub → `{{FILE:…}}` inlining → `{{TOOLS}}` injection → cache), documents all three built-in calling conventions (ntcode / xml / json_block) with wire-format examples, and gives a step-by-step guide for adding a new calling convention for a new model family. |
+| `prompt_doc.md` | **Prompt and tool-calling reference.** How the system prompt is assembled (stub, `{{FILE:…}}` inlining, `{{TOOLS}}` note, documentation files), how tools reach the model natively or through a text dialect, how the tool mode is chosen, how to add a dialect, prompt caching, and debugging. |
 
 ---
 
 ## Architecture layer map
 
-| `decouplingStrategy.md` name | Actual directory | Contains |
+| Layer | Directory | Contains |
 |---|---|---|
-| `backend/` | `utils/` | `config`, `security`, `rate_limiter`, `llm` |
-| `middleware/tools/` + registry + parser | `tools/` | one file per tool + `registry.py` (tool registry, system-prompt builder, `execute_tool_safely`) |
-| `middleware/` (connector + agent) | `utils/` (`connector.py` + `agent.py`) | message channel + LLM loop + tool parser |
-| `frontend/` | `frontend/` | `agent_loop.py` (TUI shell), `batch_loop.py` (batch runner), `common.py` (shared constants), `connector.py` (re-export shim) |
+| Frontend | `frontend/` | TUI (`agent_loop.py`), batch/todo runners, shared slash-command handling (`common.py`) |
+| Agent | `utils/agent.py`, `utils/connector.py` | the agent loop and the thread-safe channel to the frontend |
+| Conversation core | `core/` | provider-neutral message types and the tool-schema generator |
+| Providers | `providers/` | one adapter per model API, text dialects, typed errors |
+| Tools | `tools/` | one file per tool, `registry.py` (registry, `execute_tool_safely`) |
+| Infrastructure | `utils/` | configuration, prompt builder, active provider (`llm.py`), roles, security, rate limiting |
 
-### Dependency rules (enforced)
+### Dependency rules
 
 ```
-frontend/  ->  utils.connector + utils.agent  (no LLM/tool internals)
-utils/     ->  tools/  (agent.py only) + stdlib + anthropic
-tools/     ->  utils/
+frontend/   ->  utils.connector, utils.agent, utils.config_manager, utils.roles, utils.llm (/provider, /config, /prompt), tools.registry (/tools)
+utils/agent ->  core/, providers/ (interface and errors only), tools/, utils/
+providers/  ->  core/, utils.config (logger), the provider SDKs
+core/       ->  stdlib only
+tools/      ->  utils/ (config, security)
 ```
+
+The agent loop never touches wire formats: it only sees `core.types`.
 
 ### What was split in this refactor
 

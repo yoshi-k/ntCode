@@ -12,6 +12,9 @@ This document tracks active bugs and their diagnostic analysis. Check here befor
 
 ## Resolved Bugs
 
+> Entries below the first describe fixes in code that the provider rewrite has since replaced (`OpenAILLM`, `AnthropicLLM`, `utils/tool_format.py`, `execute_llm_call`). They are kept as history.
+
+- ✅ **Provider and tool-calling backend rewritten** — Claude and OpenAI-compatible servers use native tool calling through `providers/` on the typed messages in `core/`; text formats are `providers/text_tools.py` dialects. Fixes, among others: `/provider` and `/config set OPENAI_MODEL` leaving client and prompt out of sync, `/provider groq`/`lmstudio` going to the Ollama URL, native tool calls lost with a text `CALLING_CONVENTION` or when the reply also had text, `List[str]` parameters described as strings, multi-line and delimiter-in-string arguments ignored, model replies starting with an emoji treated as errors, bare `/savepoint` triggering a model call, and an order-dependent test suite. Behaviour is pinned by `tests/fixtures/wire/`.
 - ✅ **Real OpenAI models don't invoke tools** — `OpenAILLM._build_payload()` now calls
   `_is_native_fc_model()` to detect `gpt-*`, `o1`, `o3`, `o4`, `chatgpt-*` models and
   injects a full OpenAI function-calling `tools` schema (built by `_build_tools_schema()`

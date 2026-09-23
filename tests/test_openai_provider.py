@@ -78,7 +78,15 @@ def test_empty_assistant_and_foreign_opaque_blocks_are_dropped():
             Message("assistant", (OpaqueBlock("anthropic", {"type": "thinking"}),)),
             Message.user("again")]
     req = _provider(_ok({})).build_request("", msgs, [])
-    assert [m["role"] for m in req["messages"]] == ["user", "user"]
+    # The empty assistant turn is dropped and the two user turns merged.
+    assert req["messages"] == [{"role": "user", "content": "q\n\nagain"}]
+
+
+def test_consecutive_user_messages_are_merged():
+    """Strict chat templates reject two user turns in a row (e.g. after a failed request)."""
+    req = _provider(_ok({})).build_request("s", [Message.user("a"), Message.user("b")], [])
+    assert req["messages"] == [{"role": "system", "content": "s"},
+                               {"role": "user", "content": "a\n\nb"}]
 
 
 def test_invalid_arguments_are_sent_back_verbatim():

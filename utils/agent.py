@@ -61,7 +61,7 @@ def _resolve_active_model() -> str:
     import os
     if cfg_module.LLM_PROVIDER == "openai":
         return cfg_module.OPENAI_MODEL
-    return os.environ.get("NTCODE_MODEL", cfg_module.DEFAULT_MODEL)
+    return cfg_module.DEFAULT_MODEL
 
 
 # Parser selected at agent startup based on the active provider/model.
@@ -415,16 +415,16 @@ def _execute_tool_call(call: ToolCall, connector: Connector) -> ToolResult:
         payload = {"error": message, "tool_name": call.name, "success": False}
         return ToolResult(call.id, json.dumps(payload), is_error=True)
 
-    if call.name not in TOOL_REGISTRY:
-        logger.warning("Model called unknown tool %r", call.name)
-        return error(f"Unknown tool: {call.name}")
-
     if call.raw_arguments is not None:
         logger.warning("Tool %s called with invalid arguments: %r", call.name, call.raw_arguments)
         return error(
             f"The arguments are not a valid JSON object: {call.raw_arguments!r}. "
             "Call the tool again with a JSON object matching its parameters."
         )
+
+    if call.name not in TOOL_REGISTRY:
+        logger.warning("Model called unknown tool %r", call.name)
+        return error(f"Unknown tool: {call.name}")
 
     if cfg_module.VERBOSE_MODE:
         connector.request_approval(call.name, call.args)

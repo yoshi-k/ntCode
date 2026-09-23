@@ -53,8 +53,9 @@ _cache: dict[bool, str] = {}
 
 NATIVE_TOOLS_NOTE = (
     "## Tools\n\n"
-    "Your tools are provided through native tool calling. Call them directly "
-    "whenever they help; each result is returned to you before you continue."
+    "Your tools and how to call them are defined separately for this "
+    "conversation. Call them whenever they help; each result is returned to "
+    "you before you continue."
 )
 
 
@@ -130,11 +131,11 @@ def _build_tool_block(allowed_tools: list[str] | None = None) -> str:
         filtered_registry = TOOL_REGISTRY
 
     # Determine the active model name.
-    # Claude uses NTCODE_MODEL / DEFAULT_MODEL; OpenAILLM uses OPENAI_MODEL.
+    # Claude uses DEFAULT_MODEL; OpenAI-compatible endpoints OPENAI_MODEL.
     if cfg_module.LLM_PROVIDER == "openai":
         model = cfg_module.OPENAI_MODEL
     else:
-        model = os.environ.get("NTCODE_MODEL", cfg_module.DEFAULT_MODEL)
+        model = cfg_module.DEFAULT_MODEL
 
     return format_tools_for_provider(cfg_module.LLM_PROVIDER, model, filtered_registry)
 

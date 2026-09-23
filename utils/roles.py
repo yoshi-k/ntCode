@@ -282,7 +282,9 @@ def load_role(name_or_path: str) -> RoleDefinition:
     from utils.config_manager import config as cfg_mgr
     from utils.prompt import invalidate_cache
 
+    changed_keys = set(role.config_overrides)
     if _active_role is not None:
+        changed_keys |= set(_saved_config_values)
         _restore_config()
         if _saved_prompt_file is not None:
             cfg_module.SYSTEM_PROMPT_FILE = _saved_prompt_file
@@ -322,6 +324,7 @@ def load_role(name_or_path: str) -> RoleDefinition:
 
     # Invalidate the cached prompt so the new file is read on next use
     invalidate_cache()
+    _rebuild_provider_if_needed(changed_keys)
 
     _active_role = role
     logger.info("roles: activated '%s' from %s", role.name, path)
@@ -347,6 +350,7 @@ def unload_role() -> None:
     from utils.prompt import invalidate_cache
 
     name = _active_role.name
+    changed_keys = set(_saved_config_values)
     _restore_config()
 
     if _saved_prompt_file is not None:
@@ -357,7 +361,20 @@ def unload_role() -> None:
     _active_role = None
     _saved_config_values = {}
     _saved_prompt_file = None
+    _rebuild_provider_if_needed(changed_keys)
     logger.info("roles: unloaded '%s', defaults restored", name)
+
+
+def _rebuild_provider_if_needed(keys: set[str]) -> None:
+    """Rebuild the active provider when a role changed a provider setting."""
+    from utils.llm import PROVIDER_KEYS, rebuild_provider
+
+    if not keys & PROVIDER_KEYS:
+        return
+    try:
+        rebuild_provider()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("roles: could not rebuild the provider: %s", exc)
 
 
 # ---------------------------------------------------------------------------

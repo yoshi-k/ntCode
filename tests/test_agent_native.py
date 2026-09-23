@@ -275,3 +275,29 @@ def test_real_openai_provider_through_the_agent_loop():
     assert second["messages"][2]["tool_calls"][0]["id"] == "uQFY90n5"
     assert second["messages"][3]["tool_call_id"] == "uQFY90n5"
     assert json.loads(second["messages"][3]["content"]) == {"echo": "hey"}
+
+
+def test_text_dialect_provider_through_the_agent_loop():
+    """TextToolsProvider (gemma dialect) over a scripted plain-text provider."""
+    from providers.text_tools import TextToolsProvider, get_dialect
+
+    class PlainText(Provider):
+        name, model = "plain", "gemma-4"
+
+        def __init__(self):
+            self.seen: List[tuple] = []
+            self.replies = ['Echoing.\n<|tool_call>call:tool:echo({"text": "hey"})<tool_call|>',
+                            "It said hey."]
+
+        def complete(self, system, messages, tools):
+            self.seen.append((system, list(messages), list(tools)))
+            return AssistantTurn(Message.assistant(self.replies.pop(0)), "end_turn")
+
+    inner = PlainText()
+    assert _run(TextToolsProvider(inner, get_dialect("gemma")), ["echo hey"], 1) == ["It said hey."]
+
+    system, messages, tools = inner.seen[1]
+    assert tools == [] and "<|tool_call>call:tool:TOOL_NAME" in system
+    assert [m.role for m in messages] == ["user", "assistant", "user"]
+    assert '<|tool_call>call:tool:echo({"text": "hey"})<tool_call|>' in messages[1].text
+    assert messages[2].text == 'tool_result({"echo": "hey"})'

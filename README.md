@@ -261,8 +261,9 @@ Mistral, ...). `scripts/capture_wire_fixture.py` checks whether a server
 returns structured tool calls.
 
 For a server or model without tool support, choose a text format instead;
-ntCode then describes the tools in the system prompt and parses calls out of
-the reply text:
+ntCode then describes the tools in the system prompt, parses calls out of the
+reply text (`providers/text_tools.py`), and sends results back as text in
+strictly alternating turns:
 
 | Family | Syntax | Typical models |
 |--------|--------|----------------|

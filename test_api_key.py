@@ -19,7 +19,7 @@ load_dotenv()
 import anthropic
 from utils.config import DEFAULT_MODEL
 
-model = os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
+model = DEFAULT_MODEL  # includes the NTCODE_MODEL override
 api_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
 if not api_key:

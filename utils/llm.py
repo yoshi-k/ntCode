@@ -18,16 +18,14 @@ always be written to disk without requiring subdirectory creation::
 
 import copy
 import json
-import os
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from utils import config as cfg
 from utils.config import (
-    DEFAULT_MODEL,
     API_MAX_TOKENS,
-    API_TIMEOUT,
     LOG_CONVERSATIONS,
     DEBUG_MODE,
     logger,
@@ -494,75 +492,75 @@ class LLM(ABC):
 def _build_anthropic(model: str) -> "Provider":
     """Build the native-tool-use Claude adapter."""
     from providers.anthropic import AnthropicProvider
+    from utils.config_manager import config
 
     return AnthropicProvider(
         model,
-        api_key=os.environ.get("ANTHROPIC_API_KEY") or None,
+        api_key=config.get("ANTHROPIC_API_KEY") or None,
         max_tokens=API_MAX_TOKENS,
-        timeout=API_TIMEOUT,
+        timeout=cfg.API_TIMEOUT,
         rate_limiter=_rate_limiter,
     )
 
 
-def _build_openai(model: str, base_url: str) -> "LLM | Provider":
+def _build_openai(model: str, base_url: str) -> "Provider":
     """Build a client for an OpenAI-compatible endpoint.
 
     Native tool calling (providers.openai_chat.OpenAIChatProvider) unless
-    CALLING_CONVENTION names a text format, which uses the legacy OpenAILLM.
+    CALLING_CONVENTION names a text format; then the same client is wrapped
+    in providers.text_tools.TextToolsProvider with that dialect.
     """
-    from utils import config as cfg
-    from utils.tool_format import openai_tool_mode
+    from providers.openai_chat import OpenAIChatProvider
 
-    mode = openai_tool_mode()
-    logger.info(f"[LLM] Provider: openai-compatible ({mode} tools)  url={base_url}  model={model}")
-    if mode == "native":
-        from providers.openai_chat import OpenAIChatProvider
-
-        return OpenAIChatProvider(
-            model,
-            base_url=base_url,
-            api_key=cfg.OPENAI_API_KEY,
-            max_tokens=cfg.OPENAI_MAX_TOKENS,
-            temperature=cfg.OPENAI_TEMPERATURE,
-            timeout=cfg.OPENAI_TIMEOUT,
-            # OPENAI_MAX_RETRIES counts attempts; the SDK counts retries.
-            max_retries=max(0, cfg.OPENAI_MAX_RETRIES - 1),
-            rate_limiter=_rate_limiter,
-        )
-
-    from utils.openai_llm import OpenAILLM
-
-    return OpenAILLM(
-        base_url=base_url, api_key=cfg.OPENAI_API_KEY, model=model,
-        max_tokens=cfg.OPENAI_MAX_TOKENS, temperature=cfg.OPENAI_TEMPERATURE,
-        timeout=cfg.OPENAI_TIMEOUT, max_retries=cfg.OPENAI_MAX_RETRIES,
+    convention = (cfg.CALLING_CONVENTION or "").lower().strip()
+    provider: Provider = OpenAIChatProvider(
+        model,
+        base_url=base_url,
+        api_key=cfg.OPENAI_API_KEY,
+        max_tokens=cfg.OPENAI_MAX_TOKENS,
+        temperature=cfg.OPENAI_TEMPERATURE,
+        timeout=cfg.OPENAI_TIMEOUT,
+        # OPENAI_MAX_RETRIES counts attempts; the SDK counts retries.
+        max_retries=max(0, cfg.OPENAI_MAX_RETRIES - 1),
+        rate_limiter=_rate_limiter,
     )
+    mode = "native"
+    if convention not in ("", "auto", "native"):
+        from providers.text_tools import TextToolsProvider, get_dialect
+
+        provider = TextToolsProvider(provider, get_dialect(convention))
+        mode = f"text/{convention}"
+    logger.info(f"[LLM] Provider: openai-compatible ({mode} tools)  url={base_url}  model={model}")
+    return provider
 
 
-def _build_llm() -> "LLM | Provider":
-    """Instantiate the provider selected by the LLM_PROVIDER env var.
+def _build_llm() -> "Provider":
+    """Build the provider described by the current configuration.
 
-    'anthropic' (default): providers.anthropic.AnthropicProvider (native
-              tool use).  Credentials come from ANTHROPIC_API_KEY or the
-              SDK's other credential sources.
-    'openai': any OpenAI-compatible endpoint (llama.cpp, Ollama, ...), see
-              _build_openai.  Uses OPENAI_BASE_URL, OPENAI_API_KEY,
-              OPENAI_MODEL from .env.
+    The configuration (utils.config, edited through utils.config_manager) is
+    the single source of truth: /provider, /config set and roles change it
+    and then call rebuild_provider().
+
+    'anthropic' (default): providers.anthropic.AnthropicProvider with
+              DEFAULT_MODEL (NTCODE_MODEL).
+    'openai': an OpenAI-compatible endpoint (llama.cpp, Ollama, ...) with
+              OPENAI_MODEL at OPENAI_BASE_URL, see _build_openai.
     """
-    from utils.config import LLM_PROVIDER
-
-    if LLM_PROVIDER == "openai":
-        from utils import config as cfg
-
+    if cfg.LLM_PROVIDER == "openai":
         return _build_openai(cfg.OPENAI_MODEL, cfg.OPENAI_BASE_URL)
-
-    model = os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
-    logger.info(f"[LLM] Provider: anthropic  model={model}")
-    return _build_anthropic(model)
+    logger.info(f"[LLM] Provider: anthropic  model={cfg.DEFAULT_MODEL}")
+    return _build_anthropic(cfg.DEFAULT_MODEL)
 
 
 # Active LLM instance. Swap via LLM_PROVIDER env var or switch_provider().
 llm: "LLM | Provider" = _build_llm()
+
+#: Configuration keys that shape the provider; changing one needs rebuild_provider().
+PROVIDER_KEYS = frozenset({
+    "LLM_PROVIDER", "DEFAULT_MODEL", "ANTHROPIC_API_KEY", "API_TIMEOUT",
+    "CALLING_CONVENTION", "OPENAI_MODEL", "OPENAI_BASE_URL", "OPENAI_API_KEY",
+    "OPENAI_MAX_TOKENS", "OPENAI_TEMPERATURE", "OPENAI_TIMEOUT", "OPENAI_MAX_RETRIES",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -591,20 +589,54 @@ def current_provider_name() -> str:
     return f"{cls} (model={model})"
 
 
+_DEFAULT_URLS: dict[str, str] = {
+    "ollama": "http://localhost:11434/v1",
+    "lmstudio": "http://localhost:1234/v1",
+    "groq": "https://api.groq.com/openai/v1",
+    "openai": "https://api.openai.com/v1",
+}
+
+
+def rebuild_provider() -> str:
+    """Replace the active provider with one built from the current configuration.
+
+    Returns a description of the new provider.  Raises if it cannot be built
+    (the previous provider then stays active).
+    """
+    global llm
+
+    new_llm = _build_llm()
+    old, llm = llm, new_llm
+    # Close the previous provider's connection pool if it supports it.
+    if old is not new_llm and callable(getattr(old, "close", None)):
+        try:
+            old.close()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[LLM] Error closing previous provider: %s", exc)
+    desc = current_provider_name()
+    logger.info("[LLM] Provider is now: %s", desc)
+    return desc
+
+
 def switch_provider(spec: str) -> str:
-    """Replace the active llm instance with a new provider.
+    """Switch provider (and optionally model) by updating the configuration.
 
     spec: bare alias ('openai', 'anthropic', 'ollama' ...) or alias/model
     ('openai/gpt-4o', 'ollama/llama3', 'anthropic/claude-opus-4-5').
 
-    Returns a status string.  Raises ValueError for unknown aliases or
-    missing credentials.
+    'anthropic' sets LLM_PROVIDER and, with a model, DEFAULT_MODEL.  The
+    OpenAI-compatible aliases set LLM_PROVIDER=openai, OPENAI_MODEL when a
+    model is given, and OPENAI_BASE_URL: 'ollama', 'lmstudio' and 'groq'
+    use their standard URL; 'openai' keeps the configured OPENAI_BASE_URL
+    (e.g. a llama.cpp server) or falls back to api.openai.com.
+
+    Returns a status string.  Raises ValueError for unknown aliases.
     """
-    global llm
+    from utils.config_manager import config
 
     if "/" in spec:
         alias, model_override = spec.split("/", 1)
-        model_override = model_override.strip()
+        model_override = model_override.strip() or None
     else:
         alias, model_override = spec.strip(), None
 
@@ -612,36 +644,29 @@ def switch_provider(spec: str) -> str:
     if alias not in _PROVIDER_ALIASES:
         known = ", ".join(sorted(_PROVIDER_ALIASES))
         raise ValueError(f"Unknown provider alias '{alias}'. Known: {known}")
-
     canonical = _PROVIDER_ALIASES[alias]
 
+    changes: dict[str, str] = {"LLM_PROVIDER": canonical}
     if canonical == "anthropic":
-        model = model_override or os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
-        new_llm: "LLM | Provider" = _build_anthropic(model)
+        if model_override:
+            changes["DEFAULT_MODEL"] = model_override
     else:
-        from utils.config import OPENAI_BASE_URL, OPENAI_MODEL
+        if alias == "openai":
+            changes["OPENAI_BASE_URL"] = cfg.OPENAI_BASE_URL or _DEFAULT_URLS["openai"]
+        else:
+            changes["OPENAI_BASE_URL"] = _DEFAULT_URLS[alias]
+        if model_override:
+            changes["OPENAI_MODEL"] = model_override
 
-        _DEFAULT_URLS: dict[str, str] = {
-            "ollama": "http://localhost:11434/v1",
-            "lmstudio": "http://localhost:1234/v1",
-            "groq": "https://api.groq.com/openai/v1",
-            "openai": "https://api.openai.com/v1",
-        }
-        base_url = OPENAI_BASE_URL or _DEFAULT_URLS.get(alias, "http://localhost:11434/v1")
-        model = model_override or OPENAI_MODEL
-        new_llm = _build_openai(model, base_url)
-
-    # Close the previous provider's connection pool if it supports it.
-    if hasattr(llm, "close") and callable(llm.close):
-        try:
-            llm.close()
-            logger.info("[LLM] Previous provider closed successfully.")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[LLM] Error closing previous provider: %s", exc)
-
-    llm = new_llm
-    desc = current_provider_name()
-    logger.info("[LLM] Provider switched to: %s", desc)
+    previous = {key: config.get(key) for key in changes}
+    for key, value in changes.items():
+        config.set(key, value)
+    try:
+        desc = rebuild_provider()
+    except Exception:
+        for key, value in previous.items():
+            config.set(key, value)
+        raise
     return f"\u2705 Switched to {desc}"
 
 

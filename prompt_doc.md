@@ -340,195 +340,34 @@ automatically selects the `xml` formatter and parser for that session.
 
 ## 6. Adding a new calling convention
 
-All the work happens in **`utils/tool_format.py`**.  No other file needs
-to change.
+Text formats live in `providers/text_tools.py`. Each is a `Dialect` subclass
+with four parts:
 
-### Step 1 — Write the formatter
+- `header`: the instructions placed before the tool list in the system prompt;
+- `render_call(call)`: a `ToolCall` written the way the model writes it, used
+  to replay earlier calls in the conversation;
+- `find_calls(text)`: `(start, end, ToolCall)` spans for every call in a
+  reply. Read arguments with `_decode_at()` (a `json.JSONDecoder.raw_decode`
+  wrapper) rather than a regular expression, so arguments may span lines and
+  contain the closing delimiter inside strings. When a call is recognisable
+  but its arguments are not a JSON object, still return it, built with
+  `_call(name, None, raw_text)`: the agent then tells the model what was wrong;
+- optionally `render_results(results)`, if the model expects tool results in a
+  particular shape (the default is one `tool_result(...)` per result).
 
-The formatter receives the `TOOL_REGISTRY` dict (`{name: fn}`) and returns
-a plain string that will replace `{{TOOLS}}` in the system prompt.
+Then:
 
-```python
-def _format_tools_myformat(tool_registry: ToolRegistry) -> str:
-    """Return the {{TOOLS}} block for MyFormat.
+1. Add an instance to `DIALECTS` at the bottom of the module.
+2. Add the name to `_calling_convention_validator` in `utils/config_manager.py`.
+3. Add wire-contract fixtures in `tests/fixtures/wire/` with
+   `"tool_mode": "text", "dialect": "<name>"`: at least one response (a raw
+   reply with a call) and one request (a conversation with a call and its
+   result), and cases in `tests/test_text_tools.py` for the dialect's edge
+   cases.
 
-    Explain the syntax the model should use to call a tool.
-    """
-    # Build a header that tells the model how to invoke tools
-    header = """\
-You have access to tools. To call one, output:
-
-<my_tag>TOOL_NAME arg1=value1 arg2=value2</my_tag>
-
-Available tools:
-"""
-    parts = [header]
-    for name, fn in tool_registry.items():
-        # Describe each tool however the model expects
-        sig = inspect.signature(fn)
-        parts.append(f"  {name}{sig} — {(fn.__doc__ or '').strip()}")
-    return "\n".join(parts)
-```
-
-**Guidelines for the formatter:**
-- Make the invocation syntax completely unambiguous — the model must not be
-  able to confuse it with prose.
-- Include at least one concrete example in the header.
-- Tell the model explicitly what to do after it receives a `tool_result(…)`
-  message.
-- List every tool with its parameter names and types so the model knows what
-  arguments to supply.
-
-### Step 2 — Write the parser
-
-The parser receives the full text of one LLM response and returns a list of
-`(tool_name, args_dict)` pairs.  It must be defensive: log warnings and skip
-(never crash) on bad input.
-
-```python
-def _parse_myformat(text: str) -> List[Tuple[str, Dict[str, Any]]]:
-    """Parse <my_tag>…</my_tag> tool invocations from *text*."""
-    from tools.registry import TOOL_REGISTRY  # lazy import avoids circular
-
-    invocations: List[Tuple[str, Dict[str, Any]]] = []
-
-    # Example: <my_tag>read_file filename=README.md</my_tag>
-    MY_RE = re.compile(r"<my_tag>(.*?)</my_tag>", re.DOTALL)
-
-    for match in MY_RE.finditer(text):
-        body = match.group(1).strip()
-        parts = body.split()
-        if not parts:
-            logger.warning("[myformat parser] Empty tag body")
-            continue
-
-        name = parts[0]
-        if name not in TOOL_REGISTRY:
-            logger.warning("[myformat parser] Unknown tool: %s", name)
-            continue
-
-        # Parse key=value pairs
-        args: Dict[str, Any] = {}
-        for kv in parts[1:]:
-            if "=" not in kv:
-                logger.warning("[myformat parser] Bad key=value: %s", kv)
-                continue
-            k, v = kv.split("=", 1)
-            args[k] = v
-
-        invocations.append((name, args))
-
-    return invocations
-```
-
-**Guidelines for the parser:**
-- Import `TOOL_REGISTRY` lazily inside the function (avoids circular imports).
-- Validate every field before using it: name present, name in TOOL_REGISTRY,
-  args is a dict.
-- Log `logger.warning("[myformat parser] …")` for every skip, so problems
-  appear in `ntcode.log`.
-- Never raise — always `continue` on bad input.
-- Return an empty list (not `None`) when nothing was found.
-
-### Step 3 — Register both
-
-```python
-_FORMAT_REGISTRY: Dict[str, Callable[[ToolRegistry], str]] = {
-    "ntcode":     _format_tools_ntcode,
-    "xml":        _format_tools_xml,
-    "json_block": _format_tools_json_block,
-    "myformat":   _format_tools_myformat,   # ← add here
-}
-
-_PARSER_REGISTRY: Dict[str, Parser] = {
-    "ntcode":     _parse_ntcode,
-    "xml":        _parse_xml,
-    "json_block": _parse_json_block,
-    "myformat":   _parse_myformat,           # ← and here
-}
-```
-
-### Step 4 — Add detection logic
-
-```python
-def _detect_family(provider: str, model: str) -> str:
-    m = model.lower()
-    if "qwen" in m:
-        return "xml"
-    if "mistral" in m or "mixtral" in m:
-        return "json_block"
-    if "mymodel" in m or "another-variant" in m:  # ← add your pattern
-        return "myformat"
-    return "ntcode"
-```
-
-Use the most specific pattern you can.  If the model name contains a vendor
-prefix (e.g. `"vendor/mymodel-7b"`), matching on `"mymodel"` is usually safe.
-
-### Step 5 — Write tests
-
-Add three classes to **`tests/test_tool_format.py`** following the existing
-pattern:
-
-```python
-class TestDetectFamilyMyFormat:
-    def test_mymodel_returns_myformat(self):
-        from utils.tool_format import _detect_family
-        assert _detect_family("openai", "vendor/mymodel-7b") == "myformat"
-
-    def test_mymodel_case_insensitive(self):
-        from utils.tool_format import _detect_family
-        assert _detect_family("openai", "VENDOR/MYMODEL-7B") == "myformat"
-
-
-class TestParseMyFormat:
-    _REGISTRY_PATH = "tools.registry.TOOL_REGISTRY"
-
-    def _parse(self, text):
-        from utils.tool_format import _parse_myformat
-        from unittest.mock import patch
-        with patch(self._REGISTRY_PATH, _STUB_REGISTRY):
-            return _parse_myformat(text)
-
-    def test_single_call(self):
-        assert self._parse("<my_tag>git_status</my_tag>") == [("git_status", {})]
-
-    def test_unknown_tool_skipped(self):
-        assert self._parse("<my_tag>no_such_tool</my_tag>") == []
-
-    def test_no_blocks_returns_empty(self):
-        assert self._parse("Plain response.") == []
-
-
-class TestFormatMyFormat:
-    def test_contains_tool_name(self):
-        from utils.tool_format import format_tools_for_provider
-        out = format_tools_for_provider("openai", "vendor/mymodel-7b", _STUB_REGISTRY)
-        assert "read_file" in out
-```
-
-### Step 6 — Update `system_prompt.md` if needed
-
-The `ntcode` prose at the top of `system_prompt.md` is part of the
-**ntcode calling convention**.  For other conventions the system-prompt
-header is supplied by the formatter itself (see `_XML_TOOL_PROMPT_HEADER`
-and `_JSON_BLOCK_TOOL_PROMPT_HEADER` in `utils/tool_format.py`) so the
-existing prose does not conflict — those models largely ignore instructions
-that contradict their fine-tuning.
-
-If your new model is sensitive to the prose, consider:
-
-1. **Keeping one stub** and relying on the formatter header to override.
-   This works well if the model is instruction-tuned to ignore irrelevant
-   syntax descriptions.
-
-2. **Using a per-model stub** via the `NTCODE_SYSTEM_PROMPT_FILE` env var:
-   ```bash
-   export NTCODE_SYSTEM_PROMPT_FILE=system_prompt_mymodel.md
-   ```
-   Copy `system_prompt.md`, remove the ntcode prose, and keep only the
-   `{{FILE:…}}` and `{{TOOLS}}` directives.  The formatter header will
-   supply the calling-convention instructions.
+Prefer native tool calling where the server supports it: with a server that
+parses the model's tool calls (llama.cpp `--jinja`, vLLM with a tool-call
+parser, Ollama), no dialect is needed at all.
 
 ---
 

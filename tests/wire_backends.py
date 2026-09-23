@@ -10,33 +10,32 @@ plus tool calls::
 
 *handler* receives a :class:`CapturedRequest` and returns the JSON body to
 reply with.  Backends wrap it with :func:`mock_transport` for whichever HTTP
-library they use: the Anthropic SDK moved from ``httpx`` to ``httpx2`` in
-1.x, and requirements.txt does not pin it, so the tests must not depend on
-either.
+library they use: the Anthropic SDK 1.x is built on ``httpx2``, the OpenAI
+code on ``httpx``, so the tests must not depend on either.
 
 The conversation format is the one the fixtures use (see
 tests/fixtures/wire/README.md): messages hold a list of ``text``,
 ``tool_call`` and ``tool_result`` blocks, and tools are JSON-schema specs.
 
-``LegacyBackend`` adapts the current code (AnthropicLLM / OpenAILLM plus the
-text parsers in utils.tool_format) to that interface, reproducing what the
-agent loop does today.  The rewrite adds a new backend here, and the legacy
-one and every ``legacy_xfail`` marker go away with the old code.
+The backend is chosen by the fixture's provider:
+
+* ``anthropic`` -> :class:`ProviderBackend` around
+  :class:`providers.anthropic.AnthropicProvider`, the new adapter.
+* ``openai`` -> :class:`LegacyBackend`, which adapts the old OpenAILLM plus
+  the text parsers in utils.tool_format, reproducing what the agent loop
+  does today.  It goes away when the OpenAI adapter replaces it, together
+  with the remaining ``legacy_xfail`` markers.
 """
 
 from __future__ import annotations
 
 import importlib.metadata
 import json
-import os
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List
 from unittest.mock import patch
 
 import httpx
-
-BACKEND_NAME = os.environ.get("NTCODE_WIRE_BACKEND", "legacy")
-
 
 @dataclass
 class CapturedRequest:
@@ -102,7 +101,7 @@ def _render_legacy_call(family: str, name: str, args: Dict[str, Any]) -> str:
 
 
 class LegacyBackend:
-    """The current utils.llm / utils.openai_llm / utils.tool_format stack."""
+    """The old utils.openai_llm / utils.tool_format stack."""
 
     def __init__(self, profile: Dict[str, Any], handler: Handler) -> None:
         # Import utils.llm before touching LLM_PROVIDER: it builds a client at
@@ -124,28 +123,16 @@ class LegacyBackend:
         )
         self.family = _detect_family(self.provider, self.model)
 
-        if self.provider == "anthropic":
-            import anthropic
-            from utils.llm import AnthropicLLM
+        from utils.openai_llm import OpenAILLM
 
-            http = anthropic_http_module()
-            self.llm = AnthropicLLM(api_key="test-key", model=self.model)
-            self.llm.client = anthropic.Anthropic(
-                api_key="test-key",
-                http_client=http.Client(transport=mock_transport(http, handler)),
-                max_retries=0,
-            )
-        else:
-            from utils.openai_llm import OpenAILLM
-
-            self.llm = OpenAILLM(
-                base_url="http://wire.test/v1", api_key="test-key",
-                model=self.model, max_retries=1,
-            )
-            self.llm._http = httpx.Client(
-                transport=mock_transport(httpx, handler),
-                headers=self.llm._http.headers,
-            )
+        self.llm = OpenAILLM(
+            base_url="http://wire.test/v1", api_key="test-key",
+            model=self.model, max_retries=1,
+        )
+        self.llm._http = httpx.Client(
+            transport=mock_transport(httpx, handler),
+            headers=self.llm._http.headers,
+        )
 
     def _system(self, system: str, tools: List[Dict[str, Any]]) -> Any:
         # Legacy injects the text-protocol tool block into the system prompt
@@ -159,11 +146,6 @@ class LegacyBackend:
             system = system + "\n\n" + format_tools_for_provider(
                 self.provider, self.model, registry
             )
-        if self.provider == "anthropic":
-            # What SessionHeader.system_block() sends.
-            from utils.llm import apply_cache_control
-
-            return [apply_cache_control({"type": "text", "text": system})]
         return system
 
     def _messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -195,8 +177,7 @@ class LegacyBackend:
     ) -> Dict[str, Any]:
         from utils.tool_format import get_parser_for_provider
 
-        with patch("utils.llm._rate_limiter", _NoRateLimit()), \
-                patch("utils.openai_llm._rate_limiter", _NoRateLimit()):
+        with patch("utils.openai_llm._rate_limiter", _NoRateLimit()):
             text = self.llm.call(self._system(system, tools), self._messages(messages))
 
         calls = get_parser_for_provider(self.provider, self.model)(text)
@@ -206,15 +187,50 @@ class LegacyBackend:
         }
 
 
-_BACKENDS = {"legacy": LegacyBackend}
+class ProviderBackend:
+    """A new-style providers.base.Provider, fed the fixture conversation."""
+
+    def __init__(self, provider: Any) -> None:
+        self.provider = provider
+
+    def complete(
+        self,
+        system: str,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        from core.types import ToolSpec, message_from_dict
+
+        turn = self.provider.complete(
+            system,
+            [message_from_dict(m) for m in messages],
+            [ToolSpec(**t) for t in tools],
+        )
+        return {
+            "text": turn.message.text,
+            "tool_calls": [
+                {"id": c.id, "name": c.name, "args": c.args}
+                for c in turn.message.tool_calls
+            ],
+        }
+
+
+def anthropic_backend(profile: Dict[str, Any], handler: Handler) -> ProviderBackend:
+    import anthropic
+    from providers.anthropic import AnthropicProvider
+
+    http = anthropic_http_module()
+    client = anthropic.Anthropic(
+        api_key="test-key",
+        http_client=http.Client(transport=mock_transport(http, handler)),
+        max_retries=0,
+    )
+    return ProviderBackend(AnthropicProvider(profile["model"], client=client))
+
+
+_BACKENDS = {"anthropic": anthropic_backend, "openai": LegacyBackend}
 
 
 def make_backend(profile: Dict[str, Any], handler: Handler):
-    """Build the backend selected by NTCODE_WIRE_BACKEND for *profile*."""
-    try:
-        cls = _BACKENDS[BACKEND_NAME]
-    except KeyError:
-        raise ValueError(
-            f"Unknown NTCODE_WIRE_BACKEND={BACKEND_NAME!r}; known: {sorted(_BACKENDS)}"
-        ) from None
-    return cls(profile, handler)
+    """Build the backend for *profile*'s provider."""
+    return _BACKENDS[profile["provider"]](profile, handler)

@@ -246,11 +246,17 @@ Roles let you give the agent a focused persona, a restricted toolset, and a cust
 
 ### Tool-Calling Format
 
-ntCode auto-detects the correct tool-calling syntax from the model name:
+Claude (`LLM_PROVIDER=anthropic`) uses the API's **native tool calling**: tool
+definitions travel in the request, and Claude's `tool_use` blocks and the
+matching `tool_result`s are kept as structured messages. No text protocol is
+involved, and `CALLING_CONVENTION` has no effect.
+
+For OpenAI-compatible endpoints, ntCode auto-detects a text tool-calling
+syntax from the model name:
 
 | Family | Syntax | Auto-detected for |
 |--------|--------|-------------------|
-| `ntcode` | `tool: NAME({...})` | Claude, GPT-\*, and all other models (default) |
+| `ntcode` | `tool: NAME({...})` | GPT-\*, and all other models (default) |
 | `xml` | `<tool_call>{...}</tool_call>` | Qwen2.5-Instruct, Qwen3 |
 | `json_block` | ` ```json {"tool": ...} ``` ` | Mistral, Mixtral |
 | `gemma` | `<\|tool_call>call:tool:NAME({...})<tool_call\|>` | Gemma 3/4 instruct |

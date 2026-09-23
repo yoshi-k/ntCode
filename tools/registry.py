@@ -57,7 +57,10 @@ def get_tool_str_representation(tool_name: str) -> str:
     """
 
 
-def get_full_system_prompt(allowed_tools: list[str] | None = None) -> str:
+def get_full_system_prompt(
+    allowed_tools: list[str] | None = None,
+    native_tools: bool | None = None,
+) -> str:
     """Return the complete system prompt.
 
     Delegates to :func:`utils.prompt.build_system_prompt`, which loads the
@@ -68,10 +71,11 @@ def get_full_system_prompt(allowed_tools: list[str] | None = None) -> str:
     Args:
         allowed_tools: If provided, only include these tool names in the
                        ``{{TOOLS}}`` section.  Empty list or None means all tools.
+        native_tools:  See :func:`utils.prompt.build_system_prompt`.
     """
     from utils.prompt import build_system_prompt
 
-    return build_system_prompt(allowed_tools=allowed_tools)
+    return build_system_prompt(allowed_tools=allowed_tools, native_tools=native_tools)
 
 
 def execute_tool_safely(

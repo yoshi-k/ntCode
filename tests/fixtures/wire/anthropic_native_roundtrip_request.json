@@ -136,6 +136,5 @@
     "headers_absent": [
       "anthropic-beta"
     ]
-  },
-  "legacy_xfail": "legacy uses the text protocol for Claude: no tools field, calls and results as plain text"
+  }
 }

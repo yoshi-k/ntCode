@@ -61,6 +61,5 @@
         }
       }
     ]
-  },
-  "legacy_xfail": "legacy AnthropicLLM sends no tools and returns only content[0].text"
+  }
 }

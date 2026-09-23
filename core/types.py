@@ -12,6 +12,10 @@ A conversation is a list of :class:`Message`.  Each message has a role
 * :class:`ToolCall` — a tool invocation; assistant messages only.
 * :class:`ToolResult` — the outcome of a call, referencing its id; user
   messages only, in the message right after the calls, in call order.
+* :class:`OpaqueBlock` — provider data that must be sent back unchanged but
+  is not interpreted here, such as Anthropic ``thinking`` blocks; assistant
+  messages only.  Only the provider that produced it re-sends it; others
+  drop it.
 
 The dict form produced by :func:`message_to_dict` is the same one the
 wire-contract fixtures use (tests/fixtures/wire/README.md), and is what
@@ -46,7 +50,13 @@ class ToolResult:
     is_error: bool = False
 
 
-Block = Union[TextBlock, ToolCall, ToolResult]
+@dataclass(frozen=True)
+class OpaqueBlock:
+    provider: str
+    data: Dict[str, Any]
+
+
+Block = Union[TextBlock, ToolCall, ToolResult, OpaqueBlock]
 
 
 def new_call_id() -> str:
@@ -69,7 +79,9 @@ class Message:
                 raise ValueError("ToolCall blocks belong in assistant messages")
             if isinstance(block, ToolResult) and self.role != "user":
                 raise ValueError("ToolResult blocks belong in user messages")
-            if not isinstance(block, (TextBlock, ToolCall, ToolResult)):
+            if isinstance(block, OpaqueBlock) and self.role != "assistant":
+                raise ValueError("OpaqueBlock blocks belong in assistant messages")
+            if not isinstance(block, (TextBlock, ToolCall, ToolResult, OpaqueBlock)):
                 raise TypeError(f"not a content block: {block!r}")
 
     @classmethod
@@ -138,6 +150,8 @@ def block_to_dict(block: Block) -> Dict[str, Any]:
         return {"type": "text", "text": block.text}
     if isinstance(block, ToolCall):
         return {"type": "tool_call", "id": block.id, "name": block.name, "args": block.args}
+    if isinstance(block, OpaqueBlock):
+        return {"type": "opaque", "provider": block.provider, "data": block.data}
     out: Dict[str, Any] = {"type": "tool_result", "call_id": block.call_id, "content": block.content}
     if block.is_error:
         out["is_error"] = True
@@ -152,6 +166,8 @@ def block_from_dict(data: Dict[str, Any]) -> Block:
         return ToolCall(data["id"], data["name"], dict(data.get("args") or {}))
     if kind == "tool_result":
         return ToolResult(data["call_id"], data["content"], bool(data.get("is_error", False)))
+    if kind == "opaque":
+        return OpaqueBlock(data["provider"], dict(data["data"]))
     raise ValueError(f"unknown content block type: {kind!r}")
 
 

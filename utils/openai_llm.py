@@ -3,7 +3,7 @@ utils/openai_llm.py
 -------------------
 OpenAI-compatible LLM provider for ntCode.
 
-Drop-in replacement for AnthropicLLM that speaks the OpenAI Chat Completions
+Legacy text-protocol provider that speaks the OpenAI Chat Completions
 wire protocol, supported by:
 
   Provider          Base URL
@@ -48,7 +48,7 @@ class OpenAILLM(LLM):
     LLM implementation that connects to any OpenAI-compatible Chat Completions
     endpoint using plain HTTP (via httpx).
 
-    The ``call()`` method follows the same contract as ``AnthropicLLM.call()``:
+    The ``call()`` method follows the legacy ``LLM.call()`` contract:
     it accepts a system prompt and a list of conversation messages, blocks on
     the rate limiter, makes the API call, corrects the rate-limiter reservation
     with actual token counts, logs timing/usage, and returns the response text.
@@ -122,7 +122,7 @@ class OpenAILLM(LLM):
         Send a chat-completion request and return the assistant reply text.
 
         Integrates with the shared rate limiter and logger exactly like
-        ``AnthropicLLM.call()`` so the rest of ntCode needs no changes.
+        the legacy ``LLM`` interface expects.
         """
         if LOG_CONVERSATIONS:
             logger.info(

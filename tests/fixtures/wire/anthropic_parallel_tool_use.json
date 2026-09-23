@@ -76,7 +76,5 @@
         "args": {}
       }
     ]
-  },
-  "legacy_xfail": "legacy AnthropicLLM returns content[0].text and crashes on a tool_use block",
-  "legacy_xfail_raises": "AttributeError"
+  }
 }

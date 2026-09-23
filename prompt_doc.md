@@ -582,13 +582,18 @@ or as tool results from `read_file`.
 
 ## 8. Prompt caching
 
-ntCode uses Anthropic's server-side prompt cache (`cache_control: ephemeral`)
-via the `SessionHeader` / `ConversationManager` classes in `utils/llm.py`.
+With Claude, `providers/anthropic.py` sets two cache breakpoints on every
+request (prompt caching is generally available; no beta header):
 
-The **session header** — system prompt + inlined files — is marked as
-cacheable.  Claude reuses its KV-cache for this prefix across all turns in a
-session, so you only pay full input-token cost once per session rather than
-once per turn.
+- a `cache_control` marker on the **system block**, which holds the system
+  prompt plus any documentation files not already inlined
+  (`SessionHeader.system_with_docs()`); the tool definitions come before it
+  and are cached with it;
+- top-level **automatic caching**, which places a breakpoint at the end of the
+  conversation, so each step of a tool loop reuses the previous step's
+  prefix.
+
+Check `cache_read` in the `[anthropic]` log lines to confirm cache hits.
 
 **Implications for prompt changes:**
 - The cache is per-process.  Restarting ntCode starts a fresh cache.
@@ -598,9 +603,9 @@ once per turn.
 - `{{FILE:…}}` directives are resolved once at startup.  If you edit an
   inlined file mid-session, restart ntCode to pick up the changes.
 
-The prompt cache is transparent to the tool-format system: the cached prefix
-always contains the formatted tool descriptions for the active model, chosen
-at startup.
+With native tool calling the `{{TOOLS}}` placeholder becomes a short note
+(`NATIVE_TOOLS_NOTE` in `utils/prompt.py`), because the tool definitions are
+sent in the request's `tools` field instead.
 
 ---
 

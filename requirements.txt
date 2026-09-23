@@ -1,5 +1,5 @@
 ipython
-anthropic
+anthropic>=1.0,<2
 python-dotenv
 httpx
 duckduckgo_search

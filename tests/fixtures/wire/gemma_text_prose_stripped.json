@@ -1,0 +1,62 @@
+{
+  "kind": "response",
+  "description": "Prose around a text-mode call is returned without the call markup.",
+  "profile": {
+    "provider": "openai",
+    "model": "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf",
+    "tool_mode": "text",
+    "dialect": "gemma"
+  },
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Path relative to the repository root."
+          }
+        },
+        "required": [
+          "filename"
+        ]
+      }
+    }
+  ],
+  "raw_response": {
+    "id": "chatcmpl-9x7Qm2",
+    "object": "chat.completion",
+    "created": 1758630000,
+    "model": "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Let me check.\n<|tool_call>call:tool:read_file({\"filename\": \"README.md\"})<tool_call|>"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 412,
+      "completion_tokens": 57,
+      "total_tokens": 469
+    }
+  },
+  "expect_result": {
+    "text": "Let me check.",
+    "tool_calls": [
+      {
+        "id": null,
+        "name": "read_file",
+        "args": {
+          "filename": "README.md"
+        }
+      }
+    ]
+  },
+  "legacy_xfail": "legacy returns the raw model text, markup included"
+}

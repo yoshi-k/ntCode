@@ -1,0 +1,94 @@
+{
+  "kind": "request",
+  "description": "Text mode: tools described in the system prompt, the call replayed in Gemma syntax, the result as user text.",
+  "profile": {
+    "provider": "openai",
+    "model": "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf",
+    "tool_mode": "text",
+    "dialect": "gemma"
+  },
+  "system": "You are ntCode.",
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Path relative to the repository root."
+          }
+        },
+        "required": [
+          "filename"
+        ]
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "What does README.md say?"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I'll read the README."
+        },
+        {
+          "type": "tool_call",
+          "id": "toolu_01A",
+          "name": "read_file",
+          "args": {
+            "filename": "README.md"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "call_id": "toolu_01A",
+          "content": "# ntCode\nA small coding agent."
+        }
+      ]
+    }
+  ],
+  "expect_request": {
+    "path": "/v1/chat/completions",
+    "body_excludes": [
+      "tools",
+      "tool_choice"
+    ],
+    "properties": {
+      "roles_alternate": true,
+      "system_contains": [
+        "You are ntCode.",
+        "<|tool_call>",
+        "read_file"
+      ],
+      "message_contains": [
+        {
+          "index": 1,
+          "role": "assistant",
+          "substring": "<|tool_call>call:tool:read_file("
+        },
+        {
+          "index": 2,
+          "role": "user",
+          "substring": "# ntCode"
+        }
+      ]
+    }
+  }
+}

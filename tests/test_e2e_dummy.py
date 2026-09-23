@@ -18,10 +18,6 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Stub out anthropic and dotenv to allow imports
-sys.modules.setdefault("anthropic", unittest.mock.MagicMock())
-sys.modules.setdefault("dotenv", unittest.mock.MagicMock())
-
 # Ensure dummy environment variables are set
 os.environ.setdefault("ANTHROPIC_API_KEY", "dummy-key")
 os.environ.setdefault("NTCODE_MODEL", "gpt-4o") # Trigger native FC logic if needed

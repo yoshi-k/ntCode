@@ -1,0 +1,55 @@
+{
+  "kind": "request",
+  "description": "No tools: cache_control on the system block, and prompt caching without the obsolete beta header.",
+  "profile": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "tool_mode": "native"
+  },
+  "system": "You are ntCode.",
+  "tools": [],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "What does README.md say?"
+        }
+      ]
+    }
+  ],
+  "expect_request": {
+    "path": "/v1/messages",
+    "body_includes": {
+      "model": "claude-sonnet-4-6",
+      "system": [
+        {
+          "type": "text",
+          "text": "You are ntCode.",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "What does README.md say?"
+            }
+          ]
+        }
+      ]
+    },
+    "body_excludes": [
+      "tools"
+    ],
+    "headers_absent": [
+      "anthropic-beta"
+    ]
+  },
+  "legacy_xfail": "legacy sends the prompt-caching-2024-07-31 beta header"
+}

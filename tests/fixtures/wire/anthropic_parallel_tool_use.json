@@ -1,0 +1,81 @@
+{
+  "kind": "response",
+  "description": "Two tool_use blocks in one reply, no text.",
+  "profile": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "tool_mode": "native"
+  },
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Path relative to the repository root."
+          }
+        },
+        "required": [
+          "filename"
+        ]
+      }
+    },
+    {
+      "name": "git_status",
+      "description": "Show git status.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+  "raw_response": {
+    "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-6",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_01",
+        "name": "read_file",
+        "input": {
+          "filename": "README.md"
+        }
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_02",
+        "name": "git_status",
+        "input": {}
+      }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "usage": {
+      "input_tokens": 412,
+      "output_tokens": 57
+    }
+  },
+  "expect_result": {
+    "text": "",
+    "tool_calls": [
+      {
+        "id": "toolu_01",
+        "name": "read_file",
+        "args": {
+          "filename": "README.md"
+        }
+      },
+      {
+        "id": "toolu_02",
+        "name": "git_status",
+        "args": {}
+      }
+    ]
+  },
+  "legacy_xfail": "legacy AnthropicLLM returns content[0].text and crashes on a tool_use block"
+}

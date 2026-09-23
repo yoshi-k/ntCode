@@ -1,0 +1,76 @@
+{
+  "kind": "request",
+  "description": "Native mode is not limited to OpenAI models: a llama.cpp Gemma profile sends tools too.",
+  "profile": {
+    "provider": "openai",
+    "model": "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf",
+    "tool_mode": "native"
+  },
+  "system": "You are ntCode.",
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Path relative to the repository root."
+          }
+        },
+        "required": [
+          "filename"
+        ]
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "What does README.md say?"
+        }
+      ]
+    }
+  ],
+  "expect_request": {
+    "path": "/v1/chat/completions",
+    "body_includes": {
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "description": "Read a UTF-8 text file from the workspace.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "filename": {
+                  "type": "string",
+                  "description": "Path relative to the repository root."
+                }
+              },
+              "required": [
+                "filename"
+              ]
+            }
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are ntCode."
+        },
+        {
+          "role": "user",
+          "content": "What does README.md say?"
+        }
+      ]
+    }
+  },
+  "legacy_xfail": "legacy only sends tools for gpt-*/o* model names"
+}

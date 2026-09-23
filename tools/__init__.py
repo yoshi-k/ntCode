@@ -12,7 +12,6 @@ from .search_codebase import search_codebase_tool
 from .memory_store import memory_store_tool
 from .memory_search import memory_search_tool
 from .memory_list import memory_list_tool
-from .rollback_file import rollback_file_to_path, list_backups_tool
 
 __all__ = [
     "read_file_tool",
@@ -29,6 +28,4 @@ __all__ = [
     "memory_store_tool",
     "memory_search_tool",
     "memory_list_tool",
-    "rollback_file_to_path",
-    "list_backups_tool",
 ]

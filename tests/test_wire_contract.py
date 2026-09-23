@@ -15,10 +15,14 @@ on the wire, not an intermediate structure.
 Cases the current code gets wrong carry ``legacy_xfail`` and are run as
 strict xfails against the legacy backend: they must fail today, and a fix
 that makes one pass turns it into a failure until the marker is removed.
+They must fail with an AssertionError, or with the builtin exception named
+in ``legacy_xfail_raises``, so an unrelated crash is not mistaken for the
+expected failure.
 """
 
 from __future__ import annotations
 
+import builtins
 import json
 from pathlib import Path
 from typing import Any, Dict, List
@@ -163,7 +167,12 @@ def _check_request(fixture: Dict[str, Any]) -> None:
 def test_wire_contract(path: Path, request: pytest.FixtureRequest) -> None:
     fixture = _load(path)
     if BACKEND_NAME == "legacy" and "legacy_xfail" in fixture:
-        request.applymarker(pytest.mark.xfail(reason=fixture["legacy_xfail"], strict=True))
+        # Only the expected kind of failure counts; anything else (an import
+        # error, a bug in the harness) is reported as a real failure.
+        raises = getattr(builtins, fixture.get("legacy_xfail_raises", "AssertionError"))
+        request.applymarker(pytest.mark.xfail(
+            reason=fixture["legacy_xfail"], strict=True, raises=raises,
+        ))
 
     if fixture["kind"] == "response":
         _check_response(fixture)

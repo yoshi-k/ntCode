@@ -105,6 +105,11 @@ class LegacyBackend:
     """The current utils.llm / utils.openai_llm / utils.tool_format stack."""
 
     def __init__(self, profile: Dict[str, Any], handler: Handler) -> None:
+        # Import utils.llm before touching LLM_PROVIDER: it builds a client at
+        # import time, and with LLM_PROVIDER=openai that imports
+        # utils.openai_llm, which imports utils.llm back (a cycle that only
+        # works when utils.llm is imported first).
+        import utils.llm  # noqa: F401
         from utils import config as cfg
         from utils.tool_format import _detect_family
 

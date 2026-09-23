@@ -21,6 +21,7 @@ see [Capturing real responses](#capturing-real-responses).
 | `messages` | Conversation sent to the backend (see below). Optional for responses |
 | `system` | System prompt. Defaults to `"You are ntCode."` |
 | `legacy_xfail` | Present when the current code gets the case wrong: the reason. The test then runs as a strict xfail, so fixing the bug makes it fail until the marker is removed |
+| `legacy_xfail_raises` | Optional name of a builtin exception the current code raises for this case, e.g. `AttributeError`. By default only an `AssertionError` counts as the expected failure |
 
 ### Conversation format
 

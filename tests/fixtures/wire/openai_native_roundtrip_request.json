@@ -1,0 +1,123 @@
+{
+  "kind": "request",
+  "description": "Assistant tool_calls and role=tool results with tool_call_id; plain-string content.",
+  "profile": {
+    "provider": "openai",
+    "model": "gpt-4o",
+    "tool_mode": "native"
+  },
+  "system": "You are ntCode.",
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Path relative to the repository root."
+          }
+        },
+        "required": [
+          "filename"
+        ]
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "What does README.md say?"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I'll read the README."
+        },
+        {
+          "type": "tool_call",
+          "id": "toolu_01A",
+          "name": "read_file",
+          "args": {
+            "filename": "README.md"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "call_id": "toolu_01A",
+          "content": "# ntCode\nA small coding agent."
+        }
+      ]
+    }
+  ],
+  "expect_request": {
+    "path": "/v1/chat/completions",
+    "body_includes": {
+      "model": "gpt-4o",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "description": "Read a UTF-8 text file from the workspace.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "filename": {
+                  "type": "string",
+                  "description": "Path relative to the repository root."
+                }
+              },
+              "required": [
+                "filename"
+              ]
+            }
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are ntCode."
+        },
+        {
+          "role": "user",
+          "content": "What does README.md say?"
+        },
+        {
+          "role": "assistant",
+          "content": "I'll read the README.",
+          "tool_calls": [
+            {
+              "id": "toolu_01A",
+              "type": "function",
+              "function": {
+                "name": "read_file",
+                "arguments": "{\"filename\": \"README.md\"}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "toolu_01A",
+          "content": "# ntCode\nA small coding agent."
+        }
+      ]
+    }
+  },
+  "legacy_xfail": "legacy replays calls and results as plain text and builds tools from TOOL_REGISTRY"
+}

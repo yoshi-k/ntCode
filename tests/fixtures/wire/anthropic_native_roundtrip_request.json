@@ -1,0 +1,141 @@
+{
+  "kind": "request",
+  "description": "Tool call and result are sent as tool_use / tool_result blocks with matching ids; tools use input_schema.",
+  "profile": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "tool_mode": "native"
+  },
+  "system": "You are ntCode.",
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Path relative to the repository root."
+          }
+        },
+        "required": [
+          "filename"
+        ]
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "What does README.md say?"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I'll read the README."
+        },
+        {
+          "type": "tool_call",
+          "id": "toolu_01A",
+          "name": "read_file",
+          "args": {
+            "filename": "README.md"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "call_id": "toolu_01A",
+          "content": "# ntCode\nA small coding agent."
+        }
+      ]
+    }
+  ],
+  "expect_request": {
+    "path": "/v1/messages",
+    "body_includes": {
+      "model": "claude-sonnet-4-6",
+      "system": [
+        {
+          "type": "text",
+          "text": "You are ntCode.",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ],
+      "tools": [
+        {
+          "name": "read_file",
+          "description": "Read a UTF-8 text file from the workspace.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filename": {
+                "type": "string",
+                "description": "Path relative to the repository root."
+              }
+            },
+            "required": [
+              "filename"
+            ]
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "What does README.md say?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "I'll read the README."
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_01A",
+              "name": "read_file",
+              "input": {
+                "filename": "README.md"
+              }
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "toolu_01A",
+              "content": "# ntCode\nA small coding agent."
+            }
+          ]
+        }
+      ]
+    },
+    "headers_absent": [
+      "anthropic-beta"
+    ]
+  },
+  "legacy_xfail": "legacy uses the text protocol for Claude: no tools field, calls and results as plain text"
+}

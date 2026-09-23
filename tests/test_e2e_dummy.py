@@ -10,7 +10,6 @@ import os
 import sys
 import threading
 import unittest
-import unittest.mock
 import tempfile
 from pathlib import Path
 
@@ -18,10 +17,6 @@ from pathlib import Path
 # Path / import setup
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-# Stub out anthropic and dotenv to allow imports
-sys.modules.setdefault("anthropic", unittest.mock.MagicMock())
-sys.modules.setdefault("dotenv", unittest.mock.MagicMock())
 
 # Ensure dummy environment variables are set
 os.environ.setdefault("ANTHROPIC_API_KEY", "dummy-key")

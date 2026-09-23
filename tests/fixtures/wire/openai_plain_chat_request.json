@@ -1,0 +1,42 @@
+{
+  "kind": "request",
+  "description": "No tools, local model: plain string content and no tools field.",
+  "profile": {
+    "provider": "openai",
+    "model": "llama3",
+    "tool_mode": "text",
+    "dialect": "ntcode"
+  },
+  "system": "You are ntCode.",
+  "tools": [],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "What does README.md say?"
+        }
+      ]
+    }
+  ],
+  "expect_request": {
+    "path": "/v1/chat/completions",
+    "body_includes": {
+      "model": "llama3",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are ntCode."
+        },
+        {
+          "role": "user",
+          "content": "What does README.md say?"
+        }
+      ]
+    },
+    "body_excludes": [
+      "tools"
+    ]
+  }
+}

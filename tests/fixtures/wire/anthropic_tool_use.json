@@ -1,0 +1,66 @@
+{
+  "kind": "response",
+  "description": "Text plus one tool_use block; the call id must be kept for the tool_result.",
+  "profile": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "tool_mode": "native"
+  },
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Path relative to the repository root."
+          }
+        },
+        "required": [
+          "filename"
+        ]
+      }
+    }
+  ],
+  "raw_response": {
+    "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-6",
+    "content": [
+      {
+        "type": "text",
+        "text": "I'll read the README."
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_01A09q90qw90lq917835lq9",
+        "name": "read_file",
+        "input": {
+          "filename": "README.md"
+        }
+      }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "usage": {
+      "input_tokens": 412,
+      "output_tokens": 57
+    }
+  },
+  "expect_result": {
+    "text": "I'll read the README.",
+    "tool_calls": [
+      {
+        "id": "toolu_01A09q90qw90lq917835lq9",
+        "name": "read_file",
+        "args": {
+          "filename": "README.md"
+        }
+      }
+    ]
+  },
+  "legacy_xfail": "legacy AnthropicLLM sends no tools and returns only content[0].text"
+}

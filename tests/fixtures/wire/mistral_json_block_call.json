@@ -1,0 +1,60 @@
+{
+  "kind": "response",
+  "description": "Fenced JSON tool call.",
+  "profile": {
+    "provider": "openai",
+    "model": "mistral-7b-instruct",
+    "tool_mode": "text",
+    "dialect": "json_block"
+  },
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Path relative to the repository root."
+          }
+        },
+        "required": [
+          "filename"
+        ]
+      }
+    }
+  ],
+  "raw_response": {
+    "id": "chatcmpl-9x7Qm2",
+    "object": "chat.completion",
+    "created": 1758630000,
+    "model": "mistral-7b-instruct",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "```json\n{\"tool\": \"read_file\", \"args\": {\"filename\": \"README.md\"}}\n```"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 412,
+      "completion_tokens": 57,
+      "total_tokens": 469
+    }
+  },
+  "expect_result": {
+    "tool_calls": [
+      {
+        "id": null,
+        "name": "read_file",
+        "args": {
+          "filename": "README.md"
+        }
+      }
+    ]
+  }
+}

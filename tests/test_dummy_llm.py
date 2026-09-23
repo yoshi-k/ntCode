@@ -6,16 +6,11 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Path / import setup — keep consistent with the rest of the test suite
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-# Stub out anthropic so utils.llm can be imported without the real SDK.
-sys.modules.setdefault("anthropic", MagicMock())
-sys.modules.setdefault("dotenv", MagicMock())
 
 # Stub ANTHROPIC_API_KEY so utils.llm's module-level AnthropicLLM() doesn't
 # blow up when the environment variable is absent.

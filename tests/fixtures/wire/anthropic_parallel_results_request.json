@@ -1,0 +1,159 @@
+{
+  "kind": "request",
+  "description": "Results for parallel calls go in ONE user message, in call order; is_error is only sent when true.",
+  "profile": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "tool_mode": "native"
+  },
+  "system": "You are ntCode.",
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Path relative to the repository root."
+          }
+        },
+        "required": [
+          "filename"
+        ]
+      }
+    },
+    {
+      "name": "git_status",
+      "description": "Show git status.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "What does README.md say?"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_call",
+          "id": "toolu_01",
+          "name": "read_file",
+          "args": {
+            "filename": "README.md"
+          }
+        },
+        {
+          "type": "tool_call",
+          "id": "toolu_02",
+          "name": "git_status",
+          "args": {}
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "call_id": "toolu_01",
+          "content": "# ntCode\nA small coding agent."
+        },
+        {
+          "type": "tool_result",
+          "call_id": "toolu_02",
+          "content": "nothing to commit",
+          "is_error": false
+        }
+      ]
+    }
+  ],
+  "expect_request": {
+    "path": "/v1/messages",
+    "body_includes": {
+      "tools": [
+        {
+          "name": "read_file",
+          "description": "Read a UTF-8 text file from the workspace.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "filename": {
+                "type": "string",
+                "description": "Path relative to the repository root."
+              }
+            },
+            "required": [
+              "filename"
+            ]
+          }
+        },
+        {
+          "name": "git_status",
+          "description": "Show git status.",
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "What does README.md say?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_01",
+              "name": "read_file",
+              "input": {
+                "filename": "README.md"
+              }
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_02",
+              "name": "git_status",
+              "input": {}
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "toolu_01",
+              "content": "# ntCode\nA small coding agent."
+            },
+            {
+              "type": "tool_result",
+              "tool_use_id": "toolu_02",
+              "content": "nothing to commit"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "legacy_xfail": "legacy sends each result as a separate plain-text user message"
+}

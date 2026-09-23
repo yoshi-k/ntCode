@@ -1,0 +1,60 @@
+{
+  "kind": "response",
+  "description": "Gemma sometimes writes JS-style unquoted keys.",
+  "profile": {
+    "provider": "openai",
+    "model": "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf",
+    "tool_mode": "text",
+    "dialect": "gemma"
+  },
+  "tools": [
+    {
+      "name": "list_files",
+      "description": "List files in a directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory to list."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  ],
+  "raw_response": {
+    "id": "chatcmpl-9x7Qm2",
+    "object": "chat.completion",
+    "created": 1758630000,
+    "model": "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "<|tool_call>call:tool:list_files({path: \".\"})<tool_call|>"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 412,
+      "completion_tokens": 57,
+      "total_tokens": 469
+    }
+  },
+  "expect_result": {
+    "tool_calls": [
+      {
+        "id": null,
+        "name": "list_files",
+        "args": {
+          "path": "."
+        }
+      }
+    ]
+  }
+}

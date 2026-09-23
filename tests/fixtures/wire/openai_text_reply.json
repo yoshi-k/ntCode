@@ -1,0 +1,52 @@
+{
+  "kind": "response",
+  "description": "Plain text reply from an OpenAI-compatible server.",
+  "profile": {
+    "provider": "openai",
+    "model": "gpt-4o",
+    "tool_mode": "native"
+  },
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Path relative to the repository root."
+          }
+        },
+        "required": [
+          "filename"
+        ]
+      }
+    }
+  ],
+  "raw_response": {
+    "id": "chatcmpl-9x7Qm2",
+    "object": "chat.completion",
+    "created": 1758630000,
+    "model": "gpt-4o",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "README.md describes ntCode."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 412,
+      "completion_tokens": 57,
+      "total_tokens": 469
+    }
+  },
+  "expect_result": {
+    "text": "README.md describes ntCode.",
+    "tool_calls": []
+  }
+}

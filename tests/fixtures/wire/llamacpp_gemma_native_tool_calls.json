@@ -1,0 +1,71 @@
+{
+  "kind": "response",
+  "description": "llama.cpp (--jinja) parses Gemma's tool call server-side and returns tool_calls with empty content.",
+  "profile": {
+    "provider": "openai",
+    "model": "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf",
+    "tool_mode": "native"
+  },
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 text file from the workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Path relative to the repository root."
+          }
+        },
+        "required": [
+          "filename"
+        ]
+      }
+    }
+  ],
+  "raw_response": {
+    "id": "chatcmpl-9x7Qm2",
+    "object": "chat.completion",
+    "created": 1758630000,
+    "model": "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "aZ3kQ9mW1pR7",
+              "type": "function",
+              "function": {
+                "name": "read_file",
+                "arguments": "{\"filename\": \"README.md\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 412,
+      "completion_tokens": 57,
+      "total_tokens": 469
+    }
+  },
+  "expect_result": {
+    "text": "",
+    "tool_calls": [
+      {
+        "id": "aZ3kQ9mW1pR7",
+        "name": "read_file",
+        "args": {
+          "filename": "README.md"
+        }
+      }
+    ]
+  },
+  "legacy_xfail": "legacy rewrites tool_calls as 'tool:' text, which the Gemma text parser then ignores"
+}

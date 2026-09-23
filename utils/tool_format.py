@@ -92,7 +92,7 @@ def _detect_family(provider: str, model: str) -> str:
     from utils import config as cfg_module
 
     override = getattr(cfg_module, "CALLING_CONVENTION", "").lower().strip()
-    if override and override != "auto":
+    if override and override not in ("auto", "native"):
         if override in _FORMAT_REGISTRY and override in _PARSER_REGISTRY:
             return override
         logger.warning(
@@ -122,6 +122,21 @@ def _detect_family(provider: str, model: str) -> str:
     # Everything else — Claude, GPT-*, Llama, Phi — uses the default
     # ntCode text protocol which they follow reliably when prompted.
     return "ntcode"
+
+
+def openai_tool_mode() -> str:
+    """How OpenAI-compatible endpoints call tools: ``"native"`` or ``"text"``.
+
+    Native (the default: ``CALLING_CONVENTION`` empty, ``auto`` or
+    ``native``) sends ``tools`` in the request and lets the server parse the
+    model's tool calls (providers.openai_chat).  Naming a text family
+    (``ntcode``, ``xml``, ``json_block``, ``gemma``) selects the text
+    protocol instead, for servers or models without tool support.
+    """
+    from utils import config as cfg_module
+
+    override = getattr(cfg_module, "CALLING_CONVENTION", "").lower().strip()
+    return "text" if override in _FORMAT_REGISTRY else "native"
 
 
 # ===========================================================================

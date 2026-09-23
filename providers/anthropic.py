@@ -8,7 +8,8 @@ core.types          Messages API
 system prompt       ``system`` text block with a ``cache_control`` breakpoint
 ToolSpec            ``tools`` entry: ``name``, ``description``, ``input_schema``
 TextBlock           ``text`` block (empty text is dropped; the API rejects it)
-ToolCall            assistant ``tool_use`` block (``id``, ``name``, ``input``)
+ToolCall            assistant ``tool_use`` block (``id``, ``name``, ``input``);
+                    characters the API does not allow in ids become ``_``
 ToolResult          user ``tool_result`` block (``tool_use_id``, ``content``,
                     ``is_error`` only when true), placed before any text
 OpaqueBlock         any other assistant block (e.g. ``thinking``), re-sent
@@ -25,6 +26,7 @@ generally available; no beta header is sent.
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -55,6 +57,15 @@ from utils.config import logger
 
 PROVIDER_NAME = "anthropic"
 _EPHEMERAL: Dict[str, str] = {"type": "ephemeral"}
+
+# Tool-use ids must match ^[a-zA-Z0-9_-]+$.  Ids created by other providers
+# (e.g. vLLM's "functions.read_file:0") are rewritten the same way on the
+# call and on its result, so the two still match.
+_INVALID_ID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def _wire_id(call_id: str) -> str:
+    return _INVALID_ID_CHARS.sub("_", call_id) or "call"
 
 
 class AnthropicProvider(Provider):
@@ -190,7 +201,9 @@ def _message_to_wire(msg: Message) -> Optional[Dict[str, Any]]:
                 if b.text:
                     blocks.append({"type": "text", "text": b.text})
             elif isinstance(b, ToolCall):
-                blocks.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.args})
+                blocks.append(
+                    {"type": "tool_use", "id": _wire_id(b.id), "name": b.name, "input": b.args}
+                )
             elif isinstance(b, OpaqueBlock) and b.provider == PROVIDER_NAME:
                 blocks.append(b.data)
     if not blocks:
@@ -199,7 +212,7 @@ def _message_to_wire(msg: Message) -> Optional[Dict[str, Any]]:
 
 
 def _result_to_wire(result: ToolResult) -> Dict[str, Any]:
-    out: Dict[str, Any] = {"type": "tool_result", "tool_use_id": result.call_id}
+    out: Dict[str, Any] = {"type": "tool_result", "tool_use_id": _wire_id(result.call_id)}
     if result.content:
         out["content"] = result.content
     if result.is_error:

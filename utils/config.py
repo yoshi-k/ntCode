@@ -41,9 +41,11 @@ ALLOWED_BASE_PATHS = [Path.cwd()]  # Only allow current directory and subdirecto
 # Leave unset (or "anthropic") to use the Anthropic SDK (default).
 LLM_PROVIDER: str = os.environ.get("LLM_PROVIDER", "anthropic").lower().strip()
 
-# Optional explicit override for the textual tool-calling convention.
-# Empty / "auto" means infer from provider + model name in utils.tool_format.
-# Supported explicit values: ntcode, xml, json_block, gemma.
+# Tool calling for OpenAI-compatible endpoints.  Empty / "auto" / "native":
+# native tool calling through the API's `tools` field (providers.openai_chat).
+# A text format name (ntcode, xml, json_block, gemma) uses the text protocol
+# instead, for servers or models without tool support.  Claude always uses
+# native tool calling.
 CALLING_CONVENTION: str = os.environ.get(
     "CALLING_CONVENTION",
     os.environ.get("NTCODE_CALLING_CONVENTION", ""),

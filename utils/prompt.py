@@ -140,8 +140,12 @@ def _build_tool_block(allowed_tools: list[str] | None = None) -> str:
 
 
 def native_tools_active() -> bool:
-    """True when the configured provider takes tools natively (Claude)."""
-    return cfg_module.LLM_PROVIDER == "anthropic"
+    """True when the configured provider takes tools through its API."""
+    if cfg_module.LLM_PROVIDER == "anthropic":
+        return True
+    from utils.tool_format import openai_tool_mode
+
+    return openai_tool_mode() == "native"
 
 
 def build_system_prompt(

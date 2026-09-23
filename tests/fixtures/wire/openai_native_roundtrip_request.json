@@ -118,6 +118,5 @@
         }
       ]
     }
-  },
-  "legacy_xfail": "legacy replays calls and results as plain text and builds tools from TOOL_REGISTRY"
+  }
 }

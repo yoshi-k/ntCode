@@ -215,3 +215,63 @@ def test_real_anthropic_provider_through_the_agent_loop():
     assert json.loads(result["content"]) == {"echo": "hey"}
     assert second["cache_control"] == {"type": "ephemeral"}
     assert "echo" in [t["name"] for t in second["tools"]]
+
+
+def test_invalid_arguments_get_an_error_result_without_running_the_tool():
+    ran: List[str] = []
+
+    call = ToolCall("a", "echo", {}, raw_arguments='{"text": ')
+    provider = ScriptedProvider([_turn(calls=[call], stop="tool_use"), _turn("retrying")])
+    with patch("utils.agent.execute_tool_safely", side_effect=lambda *a: ran.append(a[0])):
+        assert _run(provider, ["go"], 1) == ["retrying"]
+    (result,) = provider.calls[1][1][2].results
+    assert result.is_error and "not a valid JSON object" in result.content
+    assert ran == []
+
+
+def test_real_openai_provider_through_the_agent_loop():
+    """OpenAIChatProvider + run_agent over a mock HTTP transport, end to end."""
+    import openai
+
+    from providers.openai_chat import OpenAIChatProvider
+    from tests.wire_backends import sdk_http_module
+
+    http = sdk_http_module("openai")
+    bodies: List[dict] = []
+    replies = [
+        {"content": "", "tool_calls": [{"id": "uQFY90n5", "type": "function",
+                                        "function": {"name": "echo", "arguments": '{"text":"hey"}'}}]},
+        {"content": "It said hey."},
+    ]
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        message = replies[len(bodies) - 1]
+        return http.Response(200, json={
+            "id": "c", "object": "chat.completion", "created": 0, "model": "gemma-4",
+            "choices": [{"index": 0, "message": {"role": "assistant", **message},
+                         "finish_reason": "tool_calls" if len(bodies) == 1 else "stop"}],
+        })
+
+    client = openai.OpenAI(api_key="k", base_url="http://llama.test/v1",
+                           http_client=http.Client(transport=http.MockTransport(handler)), max_retries=0)
+    provider = OpenAIChatProvider("gemma-4", client=client)
+
+    connector = Connector()
+    with patch.object(llm_module, "llm", provider), \
+            patch.dict("tools.registry.TOOL_REGISTRY", {"echo": echo_tool}):
+        thread = threading.Thread(target=run_agent, args=(connector,), daemon=True)
+        thread.start()
+        connector.send_user("echo hey")
+        reply = connector.receive_assistant_blocking(timeout=5)
+        connector.shutdown()
+        thread.join(timeout=5)
+
+    assert reply["content"] == "It said hey."
+    first, second = bodies
+    assert "echo" in [t["function"]["name"] for t in first["tools"]]
+    assert NATIVE_TOOLS_NOTE in first["messages"][0]["content"]
+    assert [m["role"] for m in second["messages"]] == ["system", "user", "assistant", "tool"]
+    assert second["messages"][2]["tool_calls"][0]["id"] == "uQFY90n5"
+    assert second["messages"][3]["tool_call_id"] == "uQFY90n5"
+    assert json.loads(second["messages"][3]["content"]) == {"echo": "hey"}

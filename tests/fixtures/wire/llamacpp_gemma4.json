@@ -92,6 +92,5 @@
         }
       }
     ]
-  },
-  "legacy_xfail": "legacy rewrites tool_calls as 'tool:' text and drops the call id"
+  }
 }

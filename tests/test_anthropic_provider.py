@@ -216,3 +216,13 @@ def test_rate_limiter_is_used():
     provider.complete("sys", ASK, [])
     assert calls[0][0] == "wait" and calls[0][1] > provider.max_tokens
     assert calls[1] == ("record", 1, 15)
+
+
+def test_foreign_tool_ids_are_made_valid_consistently():
+    call = ToolCall("functions.read_file:0", "read_file", {})
+    msgs = [Message.user("q"), Message.assistant(tool_calls=[call]),
+            Message.tool_results([ToolResult("functions.read_file:0", "ok")])]
+    req = _provider(_ok([])).build_request("", msgs, [])
+    use = req["messages"][1]["content"][0]
+    result = req["messages"][2]["content"][0]
+    assert use["id"] == result["tool_use_id"] == "functions_read_file_0"

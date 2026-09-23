@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Literal, Tuple, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union
 
 Role = Literal["user", "assistant"]
 
@@ -38,9 +38,17 @@ class TextBlock:
 
 @dataclass(frozen=True)
 class ToolCall:
+    """A tool invocation.
+
+    ``raw_arguments`` is set only when the model's arguments could not be
+    parsed as a JSON object; it then holds the text as received and ``args``
+    is empty.  Such a call must be answered with an error result, not run.
+    """
+
     id: str
     name: str
     args: Dict[str, Any] = field(default_factory=dict)
+    raw_arguments: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -134,7 +142,12 @@ class Usage:
 
 @dataclass(frozen=True)
 class AssistantTurn:
-    """One model reply as returned by a provider adapter."""
+    """One model reply as returned by a provider adapter.
+
+    ``stop_reason`` uses one vocabulary for every provider: ``end_turn``,
+    ``tool_use``, ``max_tokens``, ``refusal``, ``stop_sequence``; adapters
+    translate their API's values (and pass through any they cannot map).
+    """
 
     message: Message
     stop_reason: str = ""
@@ -149,7 +162,10 @@ def block_to_dict(block: Block) -> Dict[str, Any]:
     if isinstance(block, TextBlock):
         return {"type": "text", "text": block.text}
     if isinstance(block, ToolCall):
-        return {"type": "tool_call", "id": block.id, "name": block.name, "args": block.args}
+        out = {"type": "tool_call", "id": block.id, "name": block.name, "args": block.args}
+        if block.raw_arguments is not None:
+            out["raw_arguments"] = block.raw_arguments
+        return out
     if isinstance(block, OpaqueBlock):
         return {"type": "opaque", "provider": block.provider, "data": block.data}
     out: Dict[str, Any] = {"type": "tool_result", "call_id": block.call_id, "content": block.content}
@@ -163,7 +179,9 @@ def block_from_dict(data: Dict[str, Any]) -> Block:
     if kind == "text":
         return TextBlock(data["text"])
     if kind == "tool_call":
-        return ToolCall(data["id"], data["name"], dict(data.get("args") or {}))
+        return ToolCall(
+            data["id"], data["name"], dict(data.get("args") or {}), data.get("raw_arguments")
+        )
     if kind == "tool_result":
         return ToolResult(data["call_id"], data["content"], bool(data.get("is_error", False)))
     if kind == "opaque":

@@ -1,5 +1,6 @@
 ipython
 anthropic>=1.0,<2
+openai>=1.0,<4
 python-dotenv
 httpx
 duckduckgo_search

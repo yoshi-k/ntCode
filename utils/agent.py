@@ -419,6 +419,13 @@ def _execute_tool_call(call: ToolCall, connector: Connector) -> ToolResult:
         logger.warning("Model called unknown tool %r", call.name)
         return error(f"Unknown tool: {call.name}")
 
+    if call.raw_arguments is not None:
+        logger.warning("Tool %s called with invalid arguments: %r", call.name, call.raw_arguments)
+        return error(
+            f"The arguments are not a valid JSON object: {call.raw_arguments!r}. "
+            "Call the tool again with a JSON object matching its parameters."
+        )
+
     if cfg_module.VERBOSE_MODE:
         connector.request_approval(call.name, call.args)
         approval = connector.receive_approval_response_blocking(timeout=60)
@@ -505,7 +512,7 @@ def run_agent(connector: Connector) -> None:
 
     Two paths, chosen per model call from the active provider:
 
-    * A providers.base.Provider (Claude) uses native tool calling: the reply
+    * A providers.base.Provider (Claude, OpenAI-compatible) uses native tool calling: the reply
       and the tool results are stored as typed messages (see _native_step).
     * A legacy LLM (OpenAILLM, DummyLLM) uses the text protocol: tool calls
       are parsed from the reply text and results fed back as user text.

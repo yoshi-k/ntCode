@@ -187,52 +187,22 @@ JSON.
 tool_result({"key": "value", ...})
 ```
 
-#### Native function-calling fallback (real OpenAI endpoints)
+#### Native tool calling (the default)
 
-Real OpenAI endpoints (GPT-4o, GPT-4-turbo, etc.) may ignore the
-text-protocol instructions above and instead respond using the OpenAI native
-function-calling format, where `choices[0].message.content` is `null` and
-tool invocations appear in `choices[0].message.tool_calls`:
+The text formats in this section are only used when `CALLING_CONVENTION`
+names one of them. By default both providers use native tool calling:
 
-```json
-{
-  "choices": [{
-    "message": {
-      "role": "assistant",
-      "content": null,
-      "tool_calls": [{
-        "id": "call_abc123",
-        "type": "function",
-        "function": {
-          "name": "read_file",
-          "arguments": "{\"filename\": \"README.md\"}"
-        }
-      }]
-    }
-  }]
-}
-```
+- **Claude** (`providers/anthropic.py`): tools are sent as `tools` with
+  `input_schema`; calls come back as `tool_use` blocks and results go back as
+  `tool_result` blocks.
+- **OpenAI-compatible endpoints** (`providers/openai_chat.py`): tools are sent
+  as `tools` function definitions; the server parses the model's tool-call
+  syntax with the model's chat template and returns `tool_calls`; results go
+  back as `role: "tool"` messages with the matching `tool_call_id`.
 
-`OpenAILLM._parse()` in `utils/openai_llm.py` detects this shape
-(content is null/empty and tool_calls is non-empty) and automatically
-converts each `tool_calls` entry into an ntcode-format text line:
-
-```
-tool: read_file({"filename": "README.md"})
-```
-
-This converted text is then returned to the agent and handled by the
-standard `_parse_ntcode()` parser — no changes are needed anywhere else
-in the stack.  The conversion is logged at INFO level:
-
-```
-INFO  [OpenAILLM] Converted 1 native tool_call(s) to ntcode text.
-```
-
-This means ntCode works correctly with real OpenAI endpoints regardless
-of whether they follow the text-protocol instructions or use their native
-format.  Local models served via llama.cpp / Ollama (which do not implement
-native function-calling) always use the text-protocol path.
+In both cases the conversation is stored as `core.types` messages with
+`ToolCall` and `ToolResult` blocks, and `{{TOOLS}}` in the system prompt is
+replaced by a short note (`NATIVE_TOOLS_NOTE`).
 
 ---
 
@@ -337,8 +307,11 @@ tool (same schema shape as the xml formatter).
 
 ## 5. How the active convention is selected
 
-`_detect_family(provider, model)` in `utils/tool_format.py` applies a
-sequence of substring checks against the **lowercased model name string**:
+Native tool calling is used unless `CALLING_CONVENTION` names a text format
+(`utils.tool_format.openai_tool_mode()`). For the legacy text path,
+`_detect_family(provider, model)` in `utils/tool_format.py` returns the
+explicit `CALLING_CONVENTION`; its model-name rules below only matter for
+code that calls it without one set:
 
 ```python
 def _detect_family(provider: str, model: str) -> str:

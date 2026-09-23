@@ -71,6 +71,5 @@
         }
       ]
     }
-  },
-  "legacy_xfail": "legacy only sends tools for gpt-*/o* model names"
+  }
 }

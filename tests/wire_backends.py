@@ -10,21 +10,24 @@ plus tool calls::
 
 *handler* receives a :class:`CapturedRequest` and returns the JSON body to
 reply with.  Backends wrap it with :func:`mock_transport` for whichever HTTP
-library they use: the Anthropic SDK 1.x is built on ``httpx2``, the OpenAI
-code on ``httpx``, so the tests must not depend on either.
+library they use: current Anthropic and OpenAI SDKs are built on ``httpx2``,
+the legacy OpenAILLM on ``httpx``, so the tests must not depend on either.
 
 The conversation format is the one the fixtures use (see
 tests/fixtures/wire/README.md): messages hold a list of ``text``,
 ``tool_call`` and ``tool_result`` blocks, and tools are JSON-schema specs.
 
-The backend is chosen by the fixture's provider:
+The backend is chosen by the fixture's provider and tool mode:
 
 * ``anthropic`` -> :class:`ProviderBackend` around
-  :class:`providers.anthropic.AnthropicProvider`, the new adapter.
-* ``openai`` -> :class:`LegacyBackend`, which adapts the old OpenAILLM plus
-  the text parsers in utils.tool_format, reproducing what the agent loop
-  does today.  It goes away when the OpenAI adapter replaces it, together
-  with the remaining ``legacy_xfail`` markers.
+  :class:`providers.anthropic.AnthropicProvider`.
+* ``openai`` with ``tool_mode: native`` -> :class:`ProviderBackend` around
+  :class:`providers.openai_chat.OpenAIChatProvider`.
+* ``openai`` with ``tool_mode: text`` -> :class:`LegacyBackend`, which
+  adapts the old OpenAILLM plus the text parsers in utils.tool_format,
+  reproducing what the agent loop does today.  It goes away when the text
+  dialects move onto the provider interface, together with the remaining
+  ``legacy_xfail`` markers.
 """
 
 from __future__ import annotations
@@ -67,13 +70,18 @@ def mock_transport(http_module: Any, handler: Handler) -> Any:
     return http_module.MockTransport(respond)
 
 
-def anthropic_http_module() -> Any:
-    """The HTTP library the installed Anthropic SDK is built on."""
-    requires = importlib.metadata.requires("anthropic") or []
+def sdk_http_module(package: str) -> Any:
+    """The HTTP library (``httpx`` or ``httpx2``) the installed SDK is built on."""
+    requires = importlib.metadata.requires(package) or []
     if any(r.split()[0].split(";")[0].startswith("httpx2") for r in requires):
         import httpx2
         return httpx2
     return httpx
+
+
+def anthropic_http_module() -> Any:
+    """The HTTP library the installed Anthropic SDK is built on."""
+    return sdk_http_module("anthropic")
 
 
 class _NoRateLimit:
@@ -228,9 +236,26 @@ def anthropic_backend(profile: Dict[str, Any], handler: Handler) -> ProviderBack
     return ProviderBackend(AnthropicProvider(profile["model"], client=client))
 
 
-_BACKENDS = {"anthropic": anthropic_backend, "openai": LegacyBackend}
+def openai_backend(profile: Dict[str, Any], handler: Handler) -> Any:
+    if profile["tool_mode"] != "native":
+        return LegacyBackend(profile, handler)
+
+    import openai
+    from providers.openai_chat import OpenAIChatProvider
+
+    http = sdk_http_module("openai")
+    client = openai.OpenAI(
+        api_key="test-key",
+        base_url="http://wire.test/v1",
+        http_client=http.Client(transport=mock_transport(http, handler)),
+        max_retries=0,
+    )
+    return ProviderBackend(OpenAIChatProvider(profile["model"], client=client))
+
+
+_BACKENDS = {"anthropic": anthropic_backend, "openai": openai_backend}
 
 
 def make_backend(profile: Dict[str, Any], handler: Handler):
-    """Build the backend for *profile*'s provider."""
+    """Build the backend for *profile*'s provider and tool mode."""
     return _BACKENDS[profile["provider"]](profile, handler)

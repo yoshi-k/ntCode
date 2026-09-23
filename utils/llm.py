@@ -3,7 +3,7 @@
 This module contains:
 
 * LLM                   - legacy text-in/text-out provider interface (OpenAILLM,
-                          DummyLLM).  Claude uses providers.anthropic instead.
+                          DummyLLM).  Native providers live in providers/.
 * apply_cache_control   - stamps a content block with a cache_control marker.
 * mark_last_content_block - marks the tail block of a list for caching.
 * SessionHeader         - builds the stable, cached session-header prefix.
@@ -504,32 +504,57 @@ def _build_anthropic(model: str) -> "Provider":
     )
 
 
+def _build_openai(model: str, base_url: str) -> "LLM | Provider":
+    """Build a client for an OpenAI-compatible endpoint.
+
+    Native tool calling (providers.openai_chat.OpenAIChatProvider) unless
+    CALLING_CONVENTION names a text format, which uses the legacy OpenAILLM.
+    """
+    from utils import config as cfg
+    from utils.tool_format import openai_tool_mode
+
+    mode = openai_tool_mode()
+    logger.info(f"[LLM] Provider: openai-compatible ({mode} tools)  url={base_url}  model={model}")
+    if mode == "native":
+        from providers.openai_chat import OpenAIChatProvider
+
+        return OpenAIChatProvider(
+            model,
+            base_url=base_url,
+            api_key=cfg.OPENAI_API_KEY,
+            max_tokens=cfg.OPENAI_MAX_TOKENS,
+            temperature=cfg.OPENAI_TEMPERATURE,
+            timeout=cfg.OPENAI_TIMEOUT,
+            # OPENAI_MAX_RETRIES counts attempts; the SDK counts retries.
+            max_retries=max(0, cfg.OPENAI_MAX_RETRIES - 1),
+            rate_limiter=_rate_limiter,
+        )
+
+    from utils.openai_llm import OpenAILLM
+
+    return OpenAILLM(
+        base_url=base_url, api_key=cfg.OPENAI_API_KEY, model=model,
+        max_tokens=cfg.OPENAI_MAX_TOKENS, temperature=cfg.OPENAI_TEMPERATURE,
+        timeout=cfg.OPENAI_TIMEOUT, max_retries=cfg.OPENAI_MAX_RETRIES,
+    )
+
+
 def _build_llm() -> "LLM | Provider":
     """Instantiate the provider selected by the LLM_PROVIDER env var.
 
     'anthropic' (default): providers.anthropic.AnthropicProvider (native
               tool use).  Credentials come from ANTHROPIC_API_KEY or the
               SDK's other credential sources.
-    'openai': OpenAILLM - any OpenAI-compatible endpoint (Ollama, etc.).
-              Requires OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL in .env.
+    'openai': any OpenAI-compatible endpoint (llama.cpp, Ollama, ...), see
+              _build_openai.  Uses OPENAI_BASE_URL, OPENAI_API_KEY,
+              OPENAI_MODEL from .env.
     """
     from utils.config import LLM_PROVIDER
 
     if LLM_PROVIDER == "openai":
-        from utils.openai_llm import OpenAILLM
-        from utils.config import (
-            OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL,
-            OPENAI_MAX_TOKENS, OPENAI_TEMPERATURE, OPENAI_TIMEOUT, OPENAI_MAX_RETRIES,
-        )
-        logger.info(
-            f"[LLM] Provider: openai-compatible  "
-            f"url={OPENAI_BASE_URL}  model={OPENAI_MODEL}"
-        )
-        return OpenAILLM(
-            base_url=OPENAI_BASE_URL, api_key=OPENAI_API_KEY, model=OPENAI_MODEL,
-            max_tokens=OPENAI_MAX_TOKENS, temperature=OPENAI_TEMPERATURE,
-            timeout=OPENAI_TIMEOUT, max_retries=OPENAI_MAX_RETRIES,
-        )
+        from utils import config as cfg
+
+        return _build_openai(cfg.OPENAI_MODEL, cfg.OPENAI_BASE_URL)
 
     model = os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
     logger.info(f"[LLM] Provider: anthropic  model={model}")
@@ -594,11 +619,8 @@ def switch_provider(spec: str) -> str:
         model = model_override or os.environ.get("NTCODE_MODEL", DEFAULT_MODEL)
         new_llm: "LLM | Provider" = _build_anthropic(model)
     else:
-        from utils.openai_llm import OpenAILLM
-        from utils.config import (
-            OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL,
-            OPENAI_MAX_TOKENS, OPENAI_TEMPERATURE, OPENAI_TIMEOUT, OPENAI_MAX_RETRIES,
-        )
+        from utils.config import OPENAI_BASE_URL, OPENAI_MODEL
+
         _DEFAULT_URLS: dict[str, str] = {
             "ollama": "http://localhost:11434/v1",
             "lmstudio": "http://localhost:1234/v1",
@@ -607,11 +629,7 @@ def switch_provider(spec: str) -> str:
         }
         base_url = OPENAI_BASE_URL or _DEFAULT_URLS.get(alias, "http://localhost:11434/v1")
         model = model_override or OPENAI_MODEL
-        new_llm = OpenAILLM(
-            base_url=base_url, api_key=OPENAI_API_KEY, model=model,
-            max_tokens=OPENAI_MAX_TOKENS, temperature=OPENAI_TEMPERATURE,
-            timeout=OPENAI_TIMEOUT, max_retries=OPENAI_MAX_RETRIES,
-        )
+        new_llm = _build_openai(model, base_url)
 
     # Close the previous provider's connection pool if it supports it.
     if hasattr(llm, "close") and callable(llm.close):
@@ -635,7 +653,7 @@ def execute_llm_call(
     """Prepare the conversation and delegate to the active legacy LLM provider.
 
     Only for text-protocol providers (OpenAILLM, DummyLLM).  A
-    providers.base.Provider (Claude) is driven by the agent loop directly.
+    providers.base.Provider (native tool calling) is driven by the agent loop directly.
 
     Two calling conventions are supported:
 

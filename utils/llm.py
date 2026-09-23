@@ -34,6 +34,7 @@ from utils.config import (
     logger,
 )
 from utils.rate_limiter import _rate_limiter
+from core.types import Message, TextBlock, message_from_dict, message_to_dict
 
 
 # ===========================================================================
@@ -227,7 +228,8 @@ class ConversationManager:
       Always prepended to every API call with Claude cache_control markers.
       Never discarded between tasks.
 
-    * Task context - everything that follows the header for the current task.
+    * Task context - everything that follows the header for the current task,
+      stored as provider-neutral :class:`core.types.Message` objects.
       Discarded (reset to the cache point) when start_task() is called.
 
     Typical usage::
@@ -251,8 +253,8 @@ class ConversationManager:
 
     def __init__(self, session_header: SessionHeader) -> None:
         self.session_header: SessionHeader = session_header
-        self._task_messages: list[dict[str, Any]] = []
-        self._save_points: dict[str, list[dict[str, Any]]] = {}
+        self._task_messages: list[Message] = []
+        self._save_points: dict[str, list[Message]] = {}
 
     def start_task(self, task_description: str = "") -> None:
         """Begin a new task, resetting the conversation to the cache point.
@@ -275,80 +277,107 @@ class ConversationManager:
 
     def add_user(self, text: str) -> None:
         """Append a plain user-role text message to the current task context."""
-        self._task_messages.append(
-            {"role": "user", "content": [{"type": "text", "text": text}]}
-        )
+        self._task_messages.append(Message("user", (TextBlock(text),)))
 
     def add_assistant(self, text: str) -> None:
         """Append a plain assistant-role text message to the current task context."""
-        self._task_messages.append(
-            {"role": "assistant", "content": [{"type": "text", "text": text}]}
-        )
+        self._task_messages.append(Message("assistant", (TextBlock(text),)))
 
-    def add_message(
-        self, role: str, content: "str | list[dict[str, Any]]"
-    ) -> None:
-        """Append a message with an arbitrary content payload.
+    def add_message(self, message: Message) -> None:
+        """Append a message, which may carry tool calls or tool results."""
+        if not isinstance(message, Message):
+            raise TypeError(f"expected core.types.Message, got {type(message).__name__}")
+        self._task_messages.append(message)
 
-        Args:
-            role:    "user" or "assistant".
-            content: Plain string (auto-wrapped) or a pre-built block list.
-        """
-        if isinstance(content, str):
-            content = [{"type": "text", "text": content}]
-        self._task_messages.append({"role": role, "content": content})
+    def messages(self) -> list[Message]:
+        """Return the task-context messages (without the session header)."""
+        return list(self._task_messages)
 
     def system_for_api(self) -> list[dict[str, Any]]:
         """Return the system= parameter value for the Anthropic API."""
         return self.session_header.system_block()
 
     def messages_for_api(self) -> list[dict[str, Any]]:
-        """Return [header_user, header_ack, *task_messages] for the API."""
-        return self.session_header.as_message_pair() + list(self._task_messages)
+        """Return [header_user, header_ack, *task_messages] as text-block dicts.
+
+        This is the format the current text-protocol providers consume.
+        Messages holding tool-call or tool-result blocks cannot be expressed
+        in it; those go through a provider adapter that takes
+        :meth:`messages` directly.
+
+        Raises:
+            TypeError: If a task message contains a non-text block.
+        """
+        out = self.session_header.as_message_pair()
+        for msg in self._task_messages:
+            if msg.tool_calls or msg.results:
+                raise TypeError(
+                    "messages_for_api() only supports text messages; "
+                    "tool calls and results need a provider adapter"
+                )
+            out.append({
+                "role": msg.role,
+                "content": [{"type": "text", "text": b.text} for b in msg.content],
+            })
+        return out
+
+    @staticmethod
+    def _is_clean_start(msg: Message) -> bool:
+        """True if the task context may begin at *msg*.
+
+        It must be a user message, and must not be a tool-result message,
+        whose calls would have been cut off (native APIs reject a result
+        with no matching call).
+        """
+        return msg.role == "user" and not msg.results
 
     def prune_task_messages(self, max_messages: int) -> None:
-        """Trim the task-local message list to at most *max_messages* entries.
+        """Trim the task context to roughly the last *max_messages* messages.
 
-        Keeps the most recent messages.  The session header is never pruned.
+        The kept part always starts at a user message that is not a tool
+        result, so a tool call is never separated from its result.  The
+        start moves forward from the plain cut point to the next such
+        message; if there is none, it moves back to the previous one, which
+        keeps a few more messages than asked for.  The session header is
+        never pruned.
         """
-        if len(self._task_messages) > max_messages:
-            before = len(self._task_messages)
-            self._task_messages = self._task_messages[-max_messages:]
-            logger.info(
-                "ConversationManager: pruned %d -> %d task messages",
-                before, len(self._task_messages),
+        msgs = self._task_messages
+        if len(msgs) <= max_messages:
+            return
+        cut = len(msgs) - max_messages
+        start = next(
+            (i for i in range(cut, len(msgs)) if self._is_clean_start(msgs[i])),
+            None,
+        )
+        if start is None:
+            start = next(
+                (i for i in range(cut - 1, -1, -1) if self._is_clean_start(msgs[i])),
+                0,
             )
+        if start == 0:
+            return
+        before = len(msgs)
+        self._task_messages = msgs[start:]
+        logger.info(
+            "ConversationManager: pruned %d -> %d task messages",
+            before, len(self._task_messages),
+        )
 
     def as_flat_conversation(self) -> list[dict[str, Any]]:
-        """Return a flat conversation list for JSON serialisation (save/load).
+        """Return the task context as JSON-serialisable dicts (save/load).
 
-        The returned list has role=user/assistant messages only (no cache
-        markers), suitable for json.dump and later restore via
-        restore_from_flat().
+        Uses :func:`core.types.message_to_dict`, so tool calls and results
+        survive a save/restore round trip.  No cache markers are included.
         """
-        result: list[dict[str, Any]] = []
-        for msg in self._task_messages:
-            role = msg["role"]
-            content = msg["content"]
-            if isinstance(content, list):
-                text = " ".join(
-                    b.get("text", "") for b in content if b.get("type") == "text"
-                )
-            else:
-                text = str(content)
-            result.append({"role": role, "content": text})
-        return result
+        return [message_to_dict(m) for m in self._task_messages]
 
     def restore_from_flat(self, flat: list[dict[str, Any]]) -> None:
-        """Replace the task context with a previously serialised flat list."""
-        self._task_messages = []
-        for msg in flat:
-            role = msg.get("role", "user")
-            text = msg.get("content", "")
-            if role == "user":
-                self.add_user(text)
-            else:
-                self.add_assistant(text)
+        """Replace the task context with a previously serialised list.
+
+        Accepts both the current format and the older one where ``content``
+        is a plain string.
+        """
+        self._task_messages = [message_from_dict(m) for m in flat]
 
     # ------------------------------------------------------------------
     # Named save points (in-memory rollback)

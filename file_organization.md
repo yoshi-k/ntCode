@@ -37,6 +37,18 @@ Holds data that the agent writes and reads across sessions.  All paths are insid
 
 ---
 
+## `core/` – Provider-neutral types
+
+The target of the backend rewrite: everything above the provider adapters
+should work with these types, and wire formats are converted at the edge.
+
+| File | Description |
+|------|-------------|
+| `types.py` | Conversation types: `Message` (role + tuple of blocks), `TextBlock`, `ToolCall` (id, name, args), `ToolResult` (call_id, content, is_error), plus `ToolSpec`, `Usage` and `AssistantTurn`. `message_to_dict()` / `message_from_dict()` convert to the JSON form used by saved conversations and the wire-contract fixtures. |
+| `tool_schema.py` | **The only tool-description generator.** `tool_specs(registry, allowed)` turns tool functions into `ToolSpec`s with JSON-Schema parameters (from type hints) and descriptions (from `:param` docstrings). Used by native OpenAI `tools` and by every text dialect's `{{TOOLS}}` block. Unsupported annotations raise `TypeError`. |
+
+---
+
 ## `utils/` – Backend infrastructure
 
 Shared low-level modules that every other layer depends on.
@@ -138,6 +150,19 @@ One `.toml` file per role. System-prompt stubs for roles that override the defau
 | `test_openai_llm_parse.py` | Tests for parsing OpenAI-specific tool call formats. |
 | `test_dummy_llm.py` | Tests for the `DummyLLM` implementation. |
 | `test_memory_tools.py` | Unit tests for `memory_store`, `memory_search`, `memory_list`, and `search_codebase`. All memory tests use `tmp_path` to redirect `_MEMORY_DIR` — no real `storage/memory/` files touched. Covers: file creation, key validation, tag filtering, case-insensitivity, empty/missing directory handling, regex errors, binary file skipping, glob filtering, sandbox enforcement. |
+| `conftest.py` | Autouse fixture that snapshots and restores global runtime state (`utils.config` constants, `ConfigManager` values, active LLM, parser and role) around every test, so results do not depend on test order. |
+| `test_core_types.py` | Tests for `core/types.py`: constructors, role/block validation, immutability, dict round trip (including the old string save format), and that every fixture conversation parses. |
+| `test_tool_schema.py` | Tests for `core/tool_schema.py`: annotation-to-JSON-Schema mapping, docstring parsing, error cases, a spec for every registered tool, and the `List[str]` → array regression in the native OpenAI schema. |
+| `test_conversation_manager.py` | Tests for `ConversationManager`: text API format, pruning that never starts at an assistant message or orphans a tool result, lossless save/restore, old save format, save points. |
+| `test_wire_contract.py` / `wire_backends.py` | Wire-contract tests: each JSON file in `fixtures/wire/` specifies an HTTP request or response for a provider and tool mode (see `fixtures/wire/README.md`). `wire_backends.py` runs them against the current code through a mock HTTP transport; cases it gets wrong are strict xfails. |
+
+---
+
+## `scripts/` – Developer scripts
+
+| File | Description |
+|------|-------------|
+| `capture_wire_fixture.py` | Sends one native tool-calling request to a real Anthropic or OpenAI-compatible server and saves the raw response as a wire-contract fixture in `tests/fixtures/wire/captured/`. |
 
 ---
 

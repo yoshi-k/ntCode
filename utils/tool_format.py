@@ -62,7 +62,6 @@ Adding a new format
 
 from __future__ import annotations
 
-import inspect
 import json
 import re
 from typing import Any, Callable, Dict, List, Tuple
@@ -152,22 +151,25 @@ Available tools:
 """
 
 
-def _format_tools_ntcode(tool_registry: ToolRegistry) -> str:
-    """Return the {{TOOLS}} block for the ntCode text protocol.
+def _format_tool_specs(tool_registry: ToolRegistry) -> str:
+    """Render every tool as the JSON spec from :mod:`core.tool_schema`.
 
-    Produces a header that explains the ``tool: NAME({...})`` syntax followed
-    by a name/description/signature block for each registered tool.
+    Shared by all text dialects: the dialect headers explain the call
+    syntax, and the tool list itself is the same JSON Schema that native
+    providers receive.
     """
-    parts: list[str] = [_NTCODE_TOOL_PROMPT_HEADER]
-    for name, fn in tool_registry.items():
-        block = f"""
-    Name: {name}
-    Description: {fn.__doc__}
-    Signature: {inspect.signature(fn)}
-    """
-        parts.append("TOOL\n===\n" + block)
-        parts.append("=" * 15)
+    from core.tool_schema import tool_specs
+
+    parts: list[str] = []
+    for spec in tool_specs(tool_registry):
+        parts.append(json.dumps(spec.to_dict(), indent=2, ensure_ascii=False))
+        parts.append("-" * 40)
     return "\n".join(parts)
+
+
+def _format_tools_ntcode(tool_registry: ToolRegistry) -> str:
+    """Return the {{TOOLS}} block for the ntCode text protocol."""
+    return _NTCODE_TOOL_PROMPT_HEADER + _format_tool_specs(tool_registry)
 
 
 _NTCODE_LINE_RE = re.compile(
@@ -269,34 +271,8 @@ Available tools:
 
 
 def _format_tools_xml(tool_registry: ToolRegistry) -> str:
-    """Return the {{TOOLS}} block for the XML tool-call format.
-
-    Produces a header that explains the <tool_call> syntax followed by a
-    JSON-schema-style description of each tool.
-    """
-    parts: list[str] = [_XML_TOOL_PROMPT_HEADER]
-    for name, fn in tool_registry.items():
-        sig = inspect.signature(fn)
-        params: dict[str, Any] = {}
-        for pname, param in sig.parameters.items():
-            ann = param.annotation
-            type_str = (
-                ann.__name__ if hasattr(ann, "__name__")
-                else str(ann).replace("typing.", "")
-            )
-            entry: dict[str, Any] = {"type": type_str}
-            if param.default is not inspect.Parameter.empty:
-                entry["default"] = param.default
-            params[pname] = entry
-
-        schema = {
-            "name": name,
-            "description": (fn.__doc__ or "").strip(),
-            "parameters": params,
-        }
-        parts.append(json.dumps(schema, indent=2))
-        parts.append("-" * 40)
-    return "\n".join(parts)
+    """Return the {{TOOLS}} block for the XML tool-call format."""
+    return _XML_TOOL_PROMPT_HEADER + _format_tool_specs(tool_registry)
 
 
 # Matches a <tool_call>\n{...}\n</tool_call> block; DOTALL so the JSON body
@@ -372,29 +348,7 @@ Available tools:
 
 def _format_tools_json_block(tool_registry: ToolRegistry) -> str:
     """Return the {{TOOLS}} block for the fenced-JSON-block format."""
-    parts: list[str] = [_JSON_BLOCK_TOOL_PROMPT_HEADER]
-    for name, fn in tool_registry.items():
-        sig = inspect.signature(fn)
-        params: dict[str, Any] = {}
-        for pname, param in sig.parameters.items():
-            ann = param.annotation
-            type_str = (
-                ann.__name__ if hasattr(ann, "__name__")
-                else str(ann).replace("typing.", "")
-            )
-            entry: dict[str, Any] = {"type": type_str}
-            if param.default is not inspect.Parameter.empty:
-                entry["default"] = param.default
-            params[pname] = entry
-
-        schema = {
-            "name": name,
-            "description": (fn.__doc__ or "").strip(),
-            "parameters": params,
-        }
-        parts.append(json.dumps(schema, indent=2))
-        parts.append("-" * 40)
-    return "\n".join(parts)
+    return _JSON_BLOCK_TOOL_PROMPT_HEADER + _format_tool_specs(tool_registry)
 
 
 # Matches ```json\n{...}\n``` fences; DOTALL so the body can span lines.
@@ -470,35 +424,8 @@ Available tools:
 
 
 def _format_tools_gemma(tool_registry: ToolRegistry) -> str:
-    """Return the {{TOOLS}} block for Gemma instruct models.
-
-    Instructs the model to use its native
-    ``<|tool_call>call:tool:NAME({...})<tool_call|>`` delimiter style
-    with strict JSON arguments.
-    """
-    parts: list[str] = [_GEMMA_TOOL_PROMPT_HEADER]
-    for name, fn in tool_registry.items():
-        sig = inspect.signature(fn)
-        params: dict[str, Any] = {}
-        for pname, param in sig.parameters.items():
-            ann = param.annotation
-            type_str = (
-                ann.__name__ if hasattr(ann, "__name__")
-                else str(ann).replace("typing.", "")
-            )
-            entry: dict[str, Any] = {"type": type_str}
-            if param.default is not inspect.Parameter.empty:
-                entry["default"] = param.default
-            params[pname] = entry
-
-        schema = {
-            "name": name,
-            "description": (fn.__doc__ or "").strip(),
-            "parameters": params,
-        }
-        parts.append(json.dumps(schema, indent=2))
-        parts.append("-" * 40)
-    return "\n".join(parts)
+    """Return the {{TOOLS}} block for Gemma instruct models."""
+    return _GEMMA_TOOL_PROMPT_HEADER + _format_tool_specs(tool_registry)
 
 
 _GEMMA_OPEN = "<|tool_call>"

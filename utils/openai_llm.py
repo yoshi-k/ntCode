@@ -230,81 +230,16 @@ class OpenAILLM(LLM):
     def _build_tools_schema() -> List[Dict[str, Any]]:
         """Build the OpenAI function-calling ``tools`` list from TOOL_REGISTRY.
 
-        Each entry follows the OpenAI JSON Schema spec::
-
-            {
-              "type": "function",
-              "function": {
-                "name": "...",
-                "description": "...",
-                "parameters": {
-                  "type": "object",
-                  "properties": {...},
-                  "required": [...]
-                }
-              }
-            }
-
-        Python type annotations are mapped to JSON Schema types; unannotated
-        parameters default to ``"string"``.
+        Uses :func:`core.tool_schema.tool_specs`, the same JSON Schema the
+        text dialects put in the system prompt.
         """
-        import inspect
+        from core.tool_schema import tool_specs
         from tools.registry import TOOL_REGISTRY
 
-        _ANN_TO_JSON: Dict[Any, str] = {
-            str: "string",
-            int: "integer",
-            float: "number",
-            bool: "boolean",
-        }
-
-        tools_schema: List[Dict[str, Any]] = []
-        for name, fn in TOOL_REGISTRY.items():
-            sig = inspect.signature(fn)
-            properties: Dict[str, Any] = {}
-            required: List[str] = []
-
-            for pname, param in sig.parameters.items():
-                ann = param.annotation
-                # Handle List[str] and similar typing generics
-                if hasattr(ann, "__name__"):
-                    # Plain type like str, int, bool
-                    json_type = _ANN_TO_JSON.get(ann, "string")
-                    prop: Dict[str, Any] = {"type": json_type, "description": pname}
-                else:
-                    origin = getattr(ann, "__origin__", None)
-                    if origin is list:
-                        type_args = getattr(ann, "__args__", (str,))
-                        item_type = _ANN_TO_JSON.get(type_args[0], "string") if type_args else "string"
-                        prop = {
-                            "type": "array",
-                            "items": {"type": item_type},
-                            "description": pname,
-                        }
-                    else:
-                        prop = {"type": "string", "description": pname}
-
-                if param.default is not inspect.Parameter.empty:
-                    prop["default"] = param.default
-                else:
-                    required.append(pname)
-
-                properties[pname] = prop
-
-            fn_schema: Dict[str, Any] = {
-                "name": name,
-                "description": (fn.__doc__ or "").strip(),
-                "parameters": {
-                    "type": "object",
-                    "properties": properties,
-                },
-            }
-            if required:
-                fn_schema["parameters"]["required"] = required
-
-            tools_schema.append({"type": "function", "function": fn_schema})
-
-        return tools_schema
+        return [
+            {"type": "function", "function": spec.to_dict()}
+            for spec in tool_specs(TOOL_REGISTRY)
+        ]
 
     def _build_payload(self, system: "str | list", messages: List[Dict[str, Any]]) -> dict:
         """Assemble the JSON body for /chat/completions.

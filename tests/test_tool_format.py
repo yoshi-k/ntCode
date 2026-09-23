@@ -399,8 +399,12 @@ class TestFormatToolsForProvider:
         match = re.search(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", out)
         assert match is not None, "No <tool_call> example found in XML format output"
         example = match.group(1).strip()
-        assert "{{" not in example, f"XML header example contains '{{{{' (doubled-brace bug): {example!r}"
-        assert "}}" not in example, f"XML header example contains '}}}}' (doubled-brace bug): {example!r}"
+        # A doubled-brace bug produces '{{"name": ...}}', which is not valid
+        # JSON.  (Checking for '}}' directly is wrong: the correct example
+        # ends in a nested object, so it legitimately contains '}}'.)
+        assert not example.startswith("{{"), f"XML header example has doubled braces: {example!r}"
+        parsed = json.loads(example)
+        assert set(parsed) == {"name", "arguments"}
 
     def test_json_block_header_example_has_no_doubled_braces(self):
         """The ```json example block must contain valid single-brace JSON."""
@@ -411,8 +415,11 @@ class TestFormatToolsForProvider:
         match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", out)
         assert match is not None, "No ```json example found in json_block format output"
         example = match.group(1).strip()
-        assert "{{" not in example, f"json_block header example contains '{{{{' (doubled-brace bug): {example!r}"
-        assert "}}" not in example, f"json_block header example contains '}}}}' (doubled-brace bug): {example!r}"
+        # See test_xml_header_example_has_no_doubled_braces for why this
+        # parses the example instead of searching for '}}'.
+        assert not example.startswith("{{"), f"json_block header example has doubled braces: {example!r}"
+        parsed = json.loads(example)
+        assert set(parsed) == {"tool", "args"}
 
 
 # ===========================================================================

@@ -10,6 +10,7 @@ import os
 import sys
 import threading
 import unittest
+import unittest.mock
 import tempfile
 from pathlib import Path
 

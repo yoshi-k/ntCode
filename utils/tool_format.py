@@ -501,20 +501,18 @@ def _format_tools_gemma(tool_registry: ToolRegistry) -> str:
     return "\n".join(parts)
 
 
-# Matches <|tool_call>...<tool_call|> blocks.
-# The body is everything between the two delimiter tokens.
-# We use a negative-lookahead approach ((?:(?!<tool_call\|>).)*) rather than
-# a simple non-greedy .*? so that a closing delimiter token embedded inside
-# a JSON string value (e.g. in new_str) doesn't prematurely terminate the
-# match.  The pattern consumes characters one at a time, stopping only at
-# the real closing <tool_call|> sequence.
-_GEMMA_BLOCK_RE = re.compile(
-    r"<\|tool_call>((?:(?!<tool_call\|>).)*)<tool_call\|>",
-    re.DOTALL,
-)
+_GEMMA_OPEN = "<|tool_call>"
+_GEMMA_CLOSE = "<tool_call|>"
 
-# Matches the optional "call:tool:" prefix Gemma prepends to the tool name.
-_GEMMA_PREFIX_RE = re.compile(r"^(?:call:tool:)?")
+# Tool name after the opening delimiter, with the optional "call:tool:" prefix
+# Gemma prepends, up to and including the opening parenthesis.
+_GEMMA_HEAD_RE = re.compile(r"\s*(?:call:tool:)?\s*(\w+)\s*\(")
+
+# End of a call: closing parenthesis followed by the closing delimiter.  Only
+# used to delimit arguments that are not valid JSON (unquoted keys).
+_GEMMA_TAIL_RE = re.compile(r"\)\s*<tool_call\|>")
+
+_JSON_DECODER = json.JSONDecoder()
 
 
 def _fix_unquoted_keys(s: str) -> str:
@@ -536,6 +534,44 @@ def _fix_unquoted_keys(s: str) -> str:
     )
 
 
+def _scan_gemma_args(text: str, pos: int) -> Tuple[Any, int] | None:
+    """Parse the argument object starting at *pos* (just after ``(``).
+
+    Returns ``(args, end)`` where *end* is the index of the closing ``)``,
+    or ``None`` if the arguments cannot be parsed.
+
+    Strict JSON is decoded with :meth:`json.JSONDecoder.raw_decode`, which
+    understands string literals, so a ``<tool_call|>`` or ``)`` inside a
+    string value does not end the call early.  Only when that fails (e.g.
+    JS-style unquoted keys) do we fall back to cutting at the first
+    ``)<tool_call|>`` and running :func:`_fix_unquoted_keys`.
+    """
+    while pos < len(text) and text[pos].isspace():
+        pos += 1
+    if text.startswith(")", pos):
+        return {}, pos
+    try:
+        args, end = _JSON_DECODER.raw_decode(text, pos)
+    except json.JSONDecodeError:
+        tail = _GEMMA_TAIL_RE.search(text, pos)
+        if tail is None:
+            return None
+        try:
+            args = json.loads(_fix_unquoted_keys(text[pos:tail.start()]))
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "[gemma parser] Invalid JSON (even after key fix) %r: %s",
+                text[pos:tail.start()], exc,
+            )
+            return None
+        end = tail.start()
+    while end < len(text) and text[end].isspace():
+        end += 1
+    if not text.startswith(")", end):
+        return None
+    return args, end
+
+
 def _parse_gemma(text: str) -> List[Tuple[str, Dict[str, Any]]]:
     """Parse ``<|tool_call>call:tool:NAME({...})<tool_call|>`` blocks from *text*.
 
@@ -543,60 +579,55 @@ def _parse_gemma(text: str) -> List[Tuple[str, Dict[str, Any]]]:
     - Optional ``call:tool:`` prefix before the tool name.
     - JS-style unquoted object keys (e.g. ``{path: "."}``)
       via :func:`_fix_unquoted_keys`.
+    - The closing delimiter or parentheses inside JSON string values.
     """
     from tools.registry import TOOL_REGISTRY
 
     invocations: List[Tuple[str, Dict[str, Any]]] = []
+    pos = 0
 
-    for match in _GEMMA_BLOCK_RE.finditer(text):
-        body = match.group(1).strip()
+    while True:
+        start = text.find(_GEMMA_OPEN, pos)
+        if start == -1:
+            break
+        body = start + len(_GEMMA_OPEN)
 
-        # Strip optional "call:tool:" prefix.
-        body = _GEMMA_PREFIX_RE.sub("", body)
+        # Default resume point for malformed calls: after the next closing
+        # delimiter, so its contents are not rescanned.
+        next_close = text.find(_GEMMA_CLOSE, body)
+        pos = body if next_close == -1 else next_close + len(_GEMMA_CLOSE)
 
-        # Split on first "(" to separate tool name from args.
-        if "(" not in body:
-            logger.warning("[gemma parser] Missing '(' in tool_call body: %r", body)
+        head = _GEMMA_HEAD_RE.match(text, body)
+        if head is None:
+            logger.warning(
+                "[gemma parser] Missing tool name or '(' in: %r",
+                text[body:next_close if next_close != -1 else None],
+            )
             continue
+        name = head.group(1)
 
-        name, rest = body.split("(", 1)
-        name = name.strip()
-
-        if not name:
-            logger.warning("[gemma parser] Empty tool name in body: %r", body)
+        scanned = _scan_gemma_args(text, head.end())
+        if scanned is None:
+            logger.warning("[gemma parser] Could not parse arguments for %s", name)
             continue
+        args, close_paren = scanned
+
+        after = close_paren + 1
+        while after < len(text) and text[after].isspace():
+            after += 1
+        if not text.startswith(_GEMMA_CLOSE, after):
+            logger.warning("[gemma parser] Missing %s after %s(...)", _GEMMA_CLOSE, name)
+            continue
+        pos = after + len(_GEMMA_CLOSE)
 
         if name not in TOOL_REGISTRY:
             logger.warning("[gemma parser] Unknown tool name: %s", name)
             continue
 
-        if not rest.endswith(")"):
-            logger.warning("[gemma parser] Missing closing ')' in body: %r", body)
-            continue
-
-        json_str = rest[:-1].strip()
-
-        if not json_str:
-            args: Dict[str, Any] = {}
-        else:
-            # First attempt strict JSON; fall back to unquoted-key fixer.
-            try:
-                args = json.loads(json_str)
-            except json.JSONDecodeError:
-                fixed = _fix_unquoted_keys(json_str)
-                try:
-                    args = json.loads(fixed)
-                except json.JSONDecodeError as exc:
-                    logger.warning(
-                        "[gemma parser] Invalid JSON (even after key fix) '%s': %s",
-                        json_str, exc,
-                    )
-                    continue
-
         if not isinstance(args, dict):
             logger.warning(
-                "[gemma parser] Args must be a dict, got %s in: %r",
-                type(args).__name__, body,
+                "[gemma parser] Args must be a dict, got %s for %s",
+                type(args).__name__, name,
             )
             continue
 

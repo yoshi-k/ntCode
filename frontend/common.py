@@ -27,7 +27,7 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import Optional
 
-from tools.registry import TOOL_REGISTRY, get_full_system_prompt
+from tools.registry import TOOL_REGISTRY
 from utils.connector import Connector
 from utils.config import logger
 
@@ -96,14 +96,6 @@ Available commands:
 # ---------------------------------------------------------------------------
 # Provider command handler  (returns plain text; no print() calls)
 # ---------------------------------------------------------------------------
-
-# /config keys whose change requires rebuilding the active provider.
-_PROVIDER_KEYS = {
-    "LLM_PROVIDER", "DEFAULT_MODEL", "CALLING_CONVENTION",
-    "OPENAI_MODEL", "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MAX_TOKENS",
-    "OPENAI_TEMPERATURE", "OPENAI_TIMEOUT", "OPENAI_MAX_RETRIES",
-}
-
 
 def handle_provider_command(arg: str) -> str:
     """Handle all /provider sub-commands and return a plain-text result string.
@@ -263,13 +255,12 @@ def handle_config_command(arg: str) -> str:
             result = config.set(key, value)
             # Settings that shape the client: rebuild the active provider so
             # the change takes effect immediately without a restart.
-            if key in _PROVIDER_KEYS:
+            from utils.llm import PROVIDER_KEYS, rebuild_provider
+            if key in PROVIDER_KEYS:
                 try:
-                    from utils import config as cfg_module
-                    from utils.llm import switch_provider
-                    switch_provider(cfg_module.LLM_PROVIDER)
+                    result += f"\n  Provider: {rebuild_provider()}"
                 except Exception as exc:  # noqa: BLE001
-                    result += f"\n  (LLM provider rebuild: {exc})"
+                    result += f"\n  (LLM provider rebuild failed: {exc})"
             if key in {"LLM_PROVIDER", "OPENAI_MODEL", "DEFAULT_MODEL", "CALLING_CONVENTION", "SYSTEM_PROMPT_FILE"}:
                 result += "\n  Agent prompt/parser will refresh before the next LLM call."
             return f"\u2705 {result}"
@@ -396,7 +387,8 @@ def dispatch_line(line: str, connector: Connector) -> DispatchOutcome:
         )
 
     if name == "/prompt":
-        return DispatchOutcome(DispatchResult.LOCAL, reply=get_full_system_prompt())
+        from utils.llm import system_prompt_for_display
+        return DispatchOutcome(DispatchResult.LOCAL, reply=system_prompt_for_display())
 
     if name == "/provider":
         return DispatchOutcome(

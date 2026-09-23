@@ -14,7 +14,8 @@ core.types          Chat Completions
 ==================  ==========================================================
 system prompt       first message, ``role: "system"``
 ToolSpec            ``tools`` entry ``{"type": "function", "function": {...}}``
-TextBlock           ``content`` string (text blocks joined with newlines)
+TextBlock           ``content`` string (text blocks joined with newlines);
+                    consecutive user messages are merged into one
 ToolCall            assistant ``tool_calls`` entry; ``arguments`` is a JSON
                     string.  ``content`` is null when there is no text.
 ToolResult          one ``role: "tool"`` message per result, with
@@ -128,7 +129,13 @@ class OpenAIChatProvider(Provider):
         if system:
             wire.append({"role": "system", "content": system})
         for msg in messages:
-            wire.extend(_message_to_wire(msg))
+            for item in _message_to_wire(msg):
+                # Two user turns in a row (e.g. after a failed request) are
+                # merged: strict chat templates reject non-alternating roles.
+                if (item["role"] == "user" and wire and wire[-1]["role"] == "user"):
+                    wire[-1] = {"role": "user", "content": wire[-1]["content"] + "\n\n" + item["content"]}
+                else:
+                    wire.append(item)
 
         request: Dict[str, Any] = {"model": self.model, "messages": wire}
         if tools:

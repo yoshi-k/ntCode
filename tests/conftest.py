@@ -18,7 +18,6 @@ import pytest
 # still set environment variables / stub packages before their first import.
 _GLOBALS = [
     ("utils.llm", ["llm"]),
-    ("utils.agent", ["_active_parser"]),
     ("utils.roles", ["_active_role", "_saved_config_values", "_saved_prompt_file"]),
 ]
 

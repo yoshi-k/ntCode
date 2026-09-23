@@ -1,7 +1,7 @@
-# Dummy LLM replay file for ntCode tests.
+# DummyProvider replay file for ntCode tests.
 # Lines beginning with '#' or that are blank are ignored.
 # Each remaining line is returned as one complete LLM response, in order.
-# DummyLLM cycles back to the top once all lines are exhausted.
+# DummyProvider cycles back to the top once all lines are exhausted.
 
 I've read the file. It looks good — no issues found.
 tool: read_file({"filename": "outline.md"})

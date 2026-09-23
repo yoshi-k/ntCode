@@ -1,4 +1,4 @@
-"""Unit tests for utils.dummy_llm.DummyLLM."""
+"""Unit tests for utils.dummy_llm.DummyProvider."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # blow up when the environment variable is absent.
 os.environ.setdefault("ANTHROPIC_API_KEY", "dummy-key-for-tests")
 
-from utils.dummy_llm import DummyLLM  # noqa: E402
+from utils.dummy_llm import DummyProvider  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -25,11 +25,16 @@ from utils.dummy_llm import DummyLLM  # noqa: E402
 FIXTURE = Path(__file__).parent / "dummy_responses.txt"
 
 
-def _make(tmp_path: Path, lines: list[str]) -> DummyLLM:
-    """Write *lines* to a temp replay file and return a DummyLLM for it."""
+def _make(tmp_path: Path, lines: list[str]) -> DummyProvider:
+    """Write *lines* to a temp replay file and return a DummyProvider for it."""
     p = tmp_path / "replay.txt"
     p.write_text("\n".join(lines), encoding="utf-8")
-    return DummyLLM(p)
+    return DummyProvider(p)
+
+
+def _text(provider: DummyProvider, *_args, **_kwargs) -> str:
+    """Next reply's text; the arguments are ignored, as by complete()."""
+    return provider.complete("", [], []).message.text
 
 
 # ---------------------------------------------------------------------------
@@ -44,35 +49,35 @@ class TestBasicReplay(unittest.TestCase):
 
     def test_first_call_returns_first_line(self):
         llm = _make(self.tmp, ["alpha", "beta"])
-        self.assertEqual(llm.call(system="s", messages=[]), "alpha")
+        self.assertEqual(_text(llm, system="s", messages=[]), "alpha")
 
     def test_calls_return_lines_in_order(self):
         lines = ["one", "two", "three"]
         llm = _make(self.tmp, lines)
-        results = [llm.call("", []) for _ in lines]
+        results = [_text(llm, "", []) for _ in lines]
         self.assertEqual(results, lines)
 
     def test_cycles_when_file_exhausted(self):
         llm = _make(self.tmp, ["only"])
         for _ in range(5):
-            self.assertEqual(llm.call("", []), "only")
+            self.assertEqual(_text(llm, "", []), "only")
 
     def test_wrap_around_sequence(self):
         llm = _make(self.tmp, ["a", "b"])
-        results = [llm.call("", []) for _ in range(5)]
+        results = [_text(llm, "", []) for _ in range(5)]
         self.assertEqual(results, ["a", "b", "a", "b", "a"])
 
     def test_returns_str(self):
         llm = _make(self.tmp, ["hello"])
-        result = llm.call("", [])
+        result = _text(llm, "", [])
         self.assertIsInstance(result, str)
 
     def test_system_and_messages_ignored(self):
         """call() must always return the replayed line regardless of inputs."""
         llm = _make(self.tmp, ["fixed"])
-        r1 = llm.call(system="system A", messages=[{"role": "user", "content": "hi"}])
+        r1 = _text(llm, system="system A", messages=[{"role": "user", "content": "hi"}])
         llm.reset()
-        r2 = llm.call(system="system B", messages=[])
+        r2 = _text(llm, system="system B", messages=[])
         self.assertEqual(r1, r2)
 
 
@@ -86,35 +91,35 @@ class TestFileFiltering(unittest.TestCase):
         import tempfile
         self.tmp = Path(tempfile.mkdtemp())
 
-    def _write(self, content: str) -> DummyLLM:
+    def _write(self, content: str) -> DummyProvider:
         p = self.tmp / "r.txt"
         p.write_text(content, encoding="utf-8")
-        return DummyLLM(p)
+        return DummyProvider(p)
 
     def test_blank_lines_skipped(self):
         llm = self._write("\nfirst\n\nsecond\n")
-        self.assertEqual(llm.call("", []), "first")
-        self.assertEqual(llm.call("", []), "second")
+        self.assertEqual(_text(llm, "", []), "first")
+        self.assertEqual(_text(llm, "", []), "second")
 
     def test_comment_lines_skipped(self):
         llm = self._write("# comment\nreal response\n")
-        self.assertEqual(llm.call("", []), "real response")
+        self.assertEqual(_text(llm, "", []), "real response")
 
     def test_only_comments_raises_value_error(self):
         p = self.tmp / "comments_only.txt"
         p.write_text("# nothing\n\n", encoding="utf-8")
         with self.assertRaises(ValueError):
-            DummyLLM(p)
+            DummyProvider(p)
 
     def test_empty_file_raises_value_error(self):
         p = self.tmp / "blank.txt"
         p.write_text("", encoding="utf-8")
         with self.assertRaises(ValueError):
-            DummyLLM(p)
+            DummyProvider(p)
 
     def test_missing_file_raises_file_not_found(self):
         with self.assertRaises(FileNotFoundError):
-            DummyLLM(self.tmp / "no_such.txt")
+            DummyProvider(self.tmp / "no_such.txt")
 
 
 # ---------------------------------------------------------------------------
@@ -129,9 +134,9 @@ class TestHelpers(unittest.TestCase):
 
     def test_reset_restarts_from_first_line(self):
         llm = _make(self.tmp, ["x", "y"])
-        llm.call("", [])   # consumes "x"
+        _text(llm, "", [])   # consumes "x"
         llm.reset()
-        self.assertEqual(llm.call("", []), "x")
+        self.assertEqual(_text(llm, "", []), "x")
 
     def test_response_count(self):
         llm = _make(self.tmp, ["a", "b", "c"])
@@ -140,64 +145,55 @@ class TestHelpers(unittest.TestCase):
     def test_current_index_advances(self):
         llm = _make(self.tmp, ["a", "b", "c"])
         self.assertEqual(llm.current_index, 0)
-        llm.call("", [])
+        _text(llm, "", [])
         self.assertEqual(llm.current_index, 1)
 
     def test_current_index_wraps(self):
         llm = _make(self.tmp, ["a"])
-        llm.call("", [])   # index becomes 1, which wraps to 0
+        _text(llm, "", [])   # index becomes 1, which wraps to 0
         self.assertEqual(llm.current_index, 0)
 
     def test_reload_same_path_picks_up_new_content(self):
         p = self.tmp / "r.txt"
         p.write_text("original", encoding="utf-8")
-        llm = DummyLLM(p)
-        llm.call("", [])   # advance past first line
+        llm = DummyProvider(p)
+        _text(llm, "", [])   # advance past first line
 
         p.write_text("updated", encoding="utf-8")
         llm.reload()       # re-read same file, reset index
-        self.assertEqual(llm.call("", []), "updated")
+        self.assertEqual(_text(llm, "", []), "updated")
 
     def test_reload_with_new_path(self):
         p1 = self.tmp / "r1.txt"
         p2 = self.tmp / "r2.txt"
         p1.write_text("from r1", encoding="utf-8")
         p2.write_text("from r2", encoding="utf-8")
-        llm = DummyLLM(p1)
+        llm = DummyProvider(p1)
         llm.reload(p2)
-        self.assertEqual(llm.call("", []), "from r2")
+        self.assertEqual(_text(llm, "", []), "from r2")
 
 
 # ---------------------------------------------------------------------------
-# LLM ABC conformance + integration with execute_llm_call
+# Provider interface
 # ---------------------------------------------------------------------------
 
-class TestLLMConformance(unittest.TestCase):
+class TestProviderConformance(unittest.TestCase):
 
     def setUp(self):
         import tempfile
         self.tmp = Path(tempfile.mkdtemp())
 
-    def test_is_subclass_of_llm(self):
-        from utils.llm import LLM
-        self.assertTrue(issubclass(DummyLLM, LLM))
+    def test_is_a_provider(self):
+        from providers.base import Provider
+        self.assertTrue(issubclass(DummyProvider, Provider))
 
-    def test_works_with_execute_llm_call(self):
-        """execute_llm_call must pass the replayed string through unchanged."""
-        from utils.llm import execute_llm_call
-        llm = _make(self.tmp, ["great success"])
-        # execute_llm_call takes a conversation list and uses the module-level
-        # `llm` singleton, so we patch it temporarily.
-        import utils.llm as llm_module
-        original = llm_module.llm
-        try:
-            llm_module.llm = llm
-            result = execute_llm_call(
-                [{"role": "user", "content": "hello"}]
-            )
-        finally:
-            llm_module.llm = original
-        self.assertEqual(result, "great success")
+    def test_tool_lines_become_tool_calls(self):
+        llm = _make(self.tmp, ['tool: read_file({"filename": "a.py"})', "done"])
+        turn = llm.complete("", [], [])
+        self.assertEqual(turn.stop_reason, "tool_use")
+        (call,) = turn.message.tool_calls
+        self.assertEqual((call.name, call.args), ("read_file", {"filename": "a.py"}))
+        self.assertEqual(llm.complete("", [], []).stop_reason, "end_turn")
 
 
 # ---------------------------------------------------------------------------
@@ -207,24 +203,23 @@ class TestLLMConformance(unittest.TestCase):
 class TestFixtureFile(unittest.TestCase):
 
     def test_fixture_file_loads(self):
-        llm = DummyLLM(FIXTURE)
+        llm = DummyProvider(FIXTURE)
         self.assertGreater(llm.response_count, 0)
 
-    def test_fixture_file_returns_non_empty_strings(self):
-        llm = DummyLLM(FIXTURE)
+    def test_fixture_file_replies_have_text_or_tool_calls(self):
+        llm = DummyProvider(FIXTURE)
         for _ in range(llm.response_count):
-            text = llm.call("", [])
-            self.assertIsInstance(text, str)
-            self.assertTrue(text.strip())
+            message = llm.complete("", [], []).message
+            self.assertTrue(message.text.strip() or message.tool_calls)
 
     def test_fixture_file_cycles(self):
-        llm = DummyLLM(FIXTURE)
-        first = llm.call("", [])
+        llm = DummyProvider(FIXTURE)
+        first = _text(llm, "", [])
         # exhaust all lines
         for _ in range(llm.response_count - 1):
-            llm.call("", [])
+            _text(llm, "", [])
         # next call should wrap back to the first line
-        wrapped = llm.call("", [])
+        wrapped = _text(llm, "", [])
         self.assertEqual(first, wrapped)
 
 

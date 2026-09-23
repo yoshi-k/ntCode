@@ -20,7 +20,7 @@ from providers.errors import ProviderRateLimitError
 from utils.agent import run_agent
 from utils.connector import Connector
 from utils.llm import SessionHeader
-from utils.prompt import NATIVE_TOOLS_NOTE, build_system_prompt
+from utils.prompt import TOOLS_NOTE, build_system_prompt
 
 
 def echo_tool(text: str) -> dict:
@@ -92,7 +92,7 @@ def test_tool_call_round_trip():
     assert result.call_id == "toolu_1" and not result.is_error
     assert json.loads(result.content) == {"echo": "hi"}
     assert "echo" in [t.name for t in tools]
-    assert NATIVE_TOOLS_NOTE in system
+    assert TOOLS_NOTE in system
     assert "tool: TOOL_NAME(" not in system
 
 
@@ -157,12 +157,10 @@ def test_system_with_docs_does_not_repeat_inlined_docs(tmp_path):
     assert "### b.md\nEXTRA DOC BODY" in system
 
 
-@pytest.mark.parametrize("native", [True, False])
-def test_prompt_tool_block_depends_on_mode(native):
-    prompt = build_system_prompt(native_tools=native)
-    assert (NATIVE_TOOLS_NOTE in prompt) is native
-    assert ("You have access to the following tools" in prompt) is not native
-
+def test_prompt_has_the_tools_note_not_a_tool_protocol():
+    prompt = build_system_prompt()
+    assert TOOLS_NOTE in prompt
+    assert "You have access to the following tools" not in prompt
 
 def test_real_anthropic_provider_through_the_agent_loop():
     """AnthropicProvider + run_agent over a mock HTTP transport, end to end."""
@@ -270,8 +268,34 @@ def test_real_openai_provider_through_the_agent_loop():
     assert reply["content"] == "It said hey."
     first, second = bodies
     assert "echo" in [t["function"]["name"] for t in first["tools"]]
-    assert NATIVE_TOOLS_NOTE in first["messages"][0]["content"]
+    assert TOOLS_NOTE in first["messages"][0]["content"]
     assert [m["role"] for m in second["messages"]] == ["system", "user", "assistant", "tool"]
     assert second["messages"][2]["tool_calls"][0]["id"] == "uQFY90n5"
     assert second["messages"][3]["tool_call_id"] == "uQFY90n5"
     assert json.loads(second["messages"][3]["content"]) == {"echo": "hey"}
+
+
+def test_text_dialect_provider_through_the_agent_loop():
+    """TextToolsProvider (gemma dialect) over a scripted plain-text provider."""
+    from providers.text_tools import TextToolsProvider, get_dialect
+
+    class PlainText(Provider):
+        name, model = "plain", "gemma-4"
+
+        def __init__(self):
+            self.seen: List[tuple] = []
+            self.replies = ['Echoing.\n<|tool_call>call:tool:echo({"text": "hey"})<tool_call|>',
+                            "It said hey."]
+
+        def complete(self, system, messages, tools):
+            self.seen.append((system, list(messages), list(tools)))
+            return AssistantTurn(Message.assistant(self.replies.pop(0)), "end_turn")
+
+    inner = PlainText()
+    assert _run(TextToolsProvider(inner, get_dialect("gemma")), ["echo hey"], 1) == ["It said hey."]
+
+    system, messages, tools = inner.seen[1]
+    assert tools == [] and "<|tool_call>call:tool:TOOL_NAME" in system
+    assert [m.role for m in messages] == ["user", "assistant", "user"]
+    assert '<|tool_call>call:tool:echo({"text": "hey"})<tool_call|>' in messages[1].text
+    assert messages[2].text == 'tool_result({"echo": "hey"})'

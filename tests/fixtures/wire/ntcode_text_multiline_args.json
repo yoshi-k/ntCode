@@ -56,6 +56,5 @@
         }
       }
     ]
-  },
-  "legacy_xfail": "legacy ntcode parser reads one line at a time"
+  }
 }

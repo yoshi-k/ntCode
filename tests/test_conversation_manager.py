@@ -21,21 +21,6 @@ def _result(i):
     return Message.tool_results([ToolResult(f"c{i}", "clean")])
 
 
-def test_messages_for_api_text_format_unchanged(mgr):
-    mgr.start_task("do it")
-    mgr.add_assistant("done")
-    api = mgr.messages_for_api()
-    assert [m["role"] for m in api] == ["user", "assistant", "user", "assistant"]
-    assert api[2] == {"role": "user", "content": [{"type": "text", "text": "do it"}]}
-    assert api[3] == {"role": "assistant", "content": [{"type": "text", "text": "done"}]}
-
-
-def test_messages_for_api_rejects_tool_blocks(mgr):
-    mgr.add_message(_call(1))
-    with pytest.raises(TypeError):
-        mgr.messages_for_api()
-
-
 def test_add_message_requires_message(mgr):
     with pytest.raises(TypeError):
         mgr.add_message({"role": "user", "content": "x"})
@@ -134,3 +119,46 @@ def test_start_task_resets(mgr):
     mgr.add_user("old")
     mgr.start_task("new")
     assert mgr.messages() == [Message("user", (TextBlock("new"),))]
+
+
+def test_save_point_overwrite_names_and_delete(mgr):
+    mgr.add_user("one")
+    mgr.save_point("b")
+    mgr.save_point("a")
+    mgr.add_user("two")
+    mgr.save_point("a")                      # overwrite with the newer state
+    assert mgr.save_point_names == ["a", "b"]
+    mgr.restore("a")
+    assert mgr.task_message_count == 2
+    mgr.delete_save_point("a")
+    assert mgr.save_point_names == ["b"]
+    with pytest.raises(KeyError):
+        mgr.restore("a")
+
+
+@pytest.mark.parametrize("call", [
+    lambda m: m.save_point(""),
+    lambda m: m.restore("nonexistent"),
+    lambda m: m.delete_save_point("nonexistent"),
+])
+def test_save_point_errors(mgr, call):
+    with pytest.raises((ValueError, KeyError)):
+        call(mgr)
+
+
+def test_save_points_survive_prune_and_start_task(mgr):
+    for i in range(6):
+        mgr.add_user(f"u{i}")
+        mgr.add_assistant(f"a{i}")
+    mgr.save_point("full")
+    mgr.prune_task_messages(2)
+    mgr.start_task("new")
+    mgr.restore("full")
+    assert mgr.task_message_count == 12
+
+
+def test_missing_doc_files_are_skipped(tmp_path):
+    present = tmp_path / "present.md"
+    present.write_text("PRESENT", encoding="utf-8")
+    header = SessionHeader("sys", doc_paths=[str(tmp_path / "missing.md"), str(present)])
+    assert header.system_with_docs() == "sys\n\n### present.md\nPRESENT"

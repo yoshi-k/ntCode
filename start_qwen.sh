@@ -2,31 +2,31 @@
 # ---------------------------------------------------------------------------
 # start_qwen.sh
 # Launches ntCode.py backed by a llama.cpp server on nt-angband.local
-# running the Qwen/Qwen3-27B model.
+# (currently serving Gemma 4; the name dates from an earlier Qwen setup).
 #
 # How it works
 # ------------
 # utils/config.py reads LLM_PROVIDER from the environment.  When it equals
-# "openai", utils/llm._build_llm() instantiates utils/openai_llm.OpenAILLM
-# which talks to any OpenAI-compatible HTTP server — including llama.cpp
-# running in --server mode (POST /v1/chat/completions).
-#
-# No proxy is required; llama.cpp speaks the OpenAI wire protocol natively.
+# "openai", utils/llm._build_llm() builds providers.openai_chat.
+# OpenAIChatProvider, which talks to any OpenAI-compatible server, including
+# llama.cpp (POST /v1/chat/completions) with native tool calling.  Start
+# llama-server with --jinja so it parses the model's tool calls; otherwise
+# set CALLING_CONVENTION to a text dialect (e.g. gemma).
 #
 # Variables consumed by utils/config.py
 # -------------------------------------
-#   LLM_PROVIDER       "openai"  → use OpenAILLM instead of AnthropicLLM
+#   LLM_PROVIDER       "openai"  → OpenAI-compatible endpoint instead of Claude
 #   OPENAI_BASE_URL    root URL of the llama.cpp /v1 endpoint
 #   OPENAI_API_KEY     any non-empty string (llama.cpp ignores it)
 #   OPENAI_MODEL       model name the server was started with
 #   OPENAI_MAX_TOKENS  0 = let the server decide (omitted from request)
 #   OPENAI_TEMPERATURE sampling temperature
 #   OPENAI_TIMEOUT     per-request timeout in seconds
-#   OPENAI_MAX_RETRIES SDK-level retry attempts on transient errors
+#   OPENAI_MAX_RETRIES attempts per request on transient errors
+#   CALLING_CONVENTION unset = native tools; ntcode/xml/json_block/gemma = text
 #
-# ANTHROPIC_API_KEY is still set to a dummy value so that the Anthropic SDK
-# import inside utils/llm.py does not raise an error at module load time
-# (the import happens before the provider branch is evaluated).
+# ANTHROPIC_API_KEY is not needed for this setup; the dummy value below is
+# harmless.
 # ---------------------------------------------------------------------------
 
 # ----- llama.cpp server location -------------------------------------------

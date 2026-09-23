@@ -12,6 +12,9 @@ This document tracks active bugs and their diagnostic analysis. Check here befor
 
 ## Resolved Bugs
 
+> Entries below the first describe fixes in code that the provider rewrite has since replaced (`OpenAILLM`, `AnthropicLLM`, `utils/tool_format.py`, `execute_llm_call`). They are kept as history.
+
+- ✅ **Provider and tool-calling backend rewritten** — Claude and OpenAI-compatible servers use native tool calling through `providers/` on the typed messages in `core/`; text formats are `providers/text_tools.py` dialects. Fixes, among others: `/provider` and `/config set OPENAI_MODEL` leaving client and prompt out of sync, `/provider groq`/`lmstudio` going to the Ollama URL, native tool calls lost with a text `CALLING_CONVENTION` or when the reply also had text, `List[str]` parameters described as strings, multi-line and delimiter-in-string arguments ignored, model replies starting with an emoji treated as errors, bare `/savepoint` triggering a model call, and an order-dependent test suite. Behaviour is pinned by `tests/fixtures/wire/`.
 - ✅ **Real OpenAI models don't invoke tools** — `OpenAILLM._build_payload()` now calls
   `_is_native_fc_model()` to detect `gpt-*`, `o1`, `o3`, `o4`, `chatgpt-*` models and
   injects a full OpenAI function-calling `tools` schema (built by `_build_tools_schema()`
@@ -61,43 +64,7 @@ This document tracks active bugs and their diagnostic analysis. Check here befor
 
 
 
-The following areas have no test coverage and need a `tests/test_conversation_manager.py`:
+### Conversation state (`utils/llm.py`)
+✅ Covered by `tests/test_conversation_manager.py`: `add_user` / `add_assistant` / `add_message`, `start_task()`, pair-safe `prune_task_messages()`, lossless `as_flat_conversation()` / `restore_from_flat()` (including the old save format), save points (copying, overwrite, delete, sorted names, error cases, surviving prune and `start_task()`), and `SessionHeader` skipping missing doc files.
 
-### Prompt-caching helpers (`utils/llm.py`)
-- [ ] `apply_cache_control(block)` — returns new dict with `cache_control` key; original dict unmodified.
-- [ ] `mark_last_content_block(content)` — only the last block is cache-marked; all others unchanged.
-- [ ] `mark_last_content_block([])` — raises `ValueError` on empty list.
-
-### `SessionHeader`
-- [ ] `system_block()` — returns a one-element list; the block has `cache_control`.
-- [ ] `as_user_message()` — role is `"user"`; last content block has `cache_control`.
-- [ ] `as_assistant_ack()` — role is `"assistant"`; content is the expected ack string.
-- [ ] `as_message_pair()` — returns exactly two messages in the correct order.
-- [ ] `_load_docs()` — missing files are skipped with a warning, not raised.
-
-### `ConversationManager` — basic state
-- [ ] `add_user` / `add_assistant` — correct role and block structure appended.
-- [ ] `start_task()` — clears task messages; optional description added as first user turn.
-- [ ] `task_message_count` — reflects current length.
-- [ ] `messages_for_api()` — header pair always prepended before task messages.
-- [ ] `prune_task_messages(n)` — trims to `n`, keeps tail, never touches header.
-- [ ] `as_flat_conversation()` — strips block structure; correct role/content pairs.
-- [ ] `restore_from_flat()` — round-trips correctly: save → flat → restore → flat matches.
-
-### `ConversationManager` — named save points
-- [ ] `save_point(name)` captures current state; later mutations don't affect the snapshot.
-- [ ] `restore(name)` replaces task messages with the snapshot; message count matches.
-- [ ] Overwriting a save point with the same name reflects the newer state.
-- [ ] `restore` after further changes rolls back cleanly.
-- [ ] `delete_save_point(name)` removes the point; subsequent `restore` raises `KeyError`.
-- [ ] `save_point_names` returns sorted list of active names.
-- [ ] `save_point("")` raises `ValueError`.
-- [ ] `restore("nonexistent")` raises `KeyError`.
-- [ ] `delete_save_point("nonexistent")` raises `KeyError`.
-- [ ] Save point survives `prune_task_messages()` (save points not stored in task list).
-- [ ] Save point survives `start_task()` (save points are not cleared by reset).
-
-### `AnthropicLLM` (unit, no API calls)
-- [ ] `_needs_caching_beta()` — returns `True` when system list has `cache_control`.
-- [ ] `_needs_caching_beta()` — returns `True` when a message content block has `cache_control`.
-- [ ] `_needs_caching_beta()` — returns `False` when no markers present.
+The old cache-marker helpers, the user/assistant header pair, `messages_for_api()` and `AnthropicLLM` were removed in the provider rewrite; the provider adapters are covered by `tests/test_anthropic_provider.py`, `tests/test_openai_provider.py`, `tests/test_text_tools.py` and the wire-contract fixtures (`tests/test_wire_contract.py`).

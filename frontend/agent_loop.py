@@ -8,7 +8,7 @@ This module owns all terminal-interaction code:
 
 It communicates with the agent *exclusively* through a
 :class:`~utils.connector.Connector` instance - it never imports
-``execute_llm_call``, ``TOOL_REGISTRY``, or any other agent internals.
+the provider, ``TOOL_REGISTRY``, or any other agent internals.
 
 All slash-command parsing and dispatch is handled by
 :mod:`frontend.common` so that the batch frontend stays in sync.

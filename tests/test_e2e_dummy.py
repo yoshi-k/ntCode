@@ -1,6 +1,6 @@
 """End-to-end integration test for ntCode.
 
-This test simulates a batch frontend interaction using a DummyLLM.
+This test simulates a batch frontend interaction using a DummyProvider.
 It verifies that user instructions are correctly routed through the
 Connector to the Agent, and that the Agent can correctly parse tool
 calls and execute them via the actual tool implementations.
@@ -24,14 +24,14 @@ os.environ.setdefault("NTCODE_MODEL", "gpt-4o") # Trigger native FC logic if nee
 
 from utils.connector import Connector
 from utils.agent import run_agent
-from utils.dummy_llm import DummyLLM
+from utils.dummy_llm import DummyProvider
 import utils.llm as llm_module
 
 # ---------------------------------------------------------------------------
 # The Test Case
 # ---------------------------------------------------------------------------
 
-class TestEndToEndBatchWithDummyLLM(unittest.TestCase):
+class TestEndToEndBatchWithDummyProvider(unittest.TestCase):
 
     def setUp(self):
         self.tmp_dir = Path(tempfile.mkdtemp())
@@ -40,7 +40,7 @@ class TestEndToEndBatchWithDummyLLM(unittest.TestCase):
         
         # We will use a sequence of responses that includes a tool call
         # The first response will be a tool call to list_files.
-        # The second response (from DummyLLM) will be a plain text reply.
+        # The second response (from DummyProvider) will be a plain text reply.
         self.replay_content = [
             "tool: list_files({\"path\": \".\"})",
             "I have listed the files for you."
@@ -52,10 +52,10 @@ class TestEndToEndBatchWithDummyLLM(unittest.TestCase):
         shutil.rmtree(self.tmp_dir)
 
     def test_batch_flow_with_tool_call(self):
-        """Simulate: User -> Connector -> Agent -> DummyLLM -> Tool -> Agent -> Connector -> User"""
+        """Simulate: User -> Connector -> Agent -> DummyProvider -> Tool -> Agent -> Connector -> User"""
         
-        # 1. Setup DummyLLM
-        dummy = DummyLLM(self.replay_file)
+        # 1. Setup DummyProvider
+        dummy = DummyProvider(self.replay_file)
         
         # 2. Patch the module-level llm singleton to use our dummy
         original_llm = llm_module.llm

@@ -24,7 +24,9 @@ SYSTEM_PROMPT_FILE: str = os.environ.get(
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit
 MAX_CONVERSATION_LENGTH = 50  # Maximum number of messages to keep
-DEFAULT_MODEL = "claude-sonnet-4-6"  # Default Claude model
+# Claude model; NTCODE_MODEL overrides it.  Read only here: everything else
+# uses DEFAULT_MODEL, so /config set DEFAULT_MODEL takes effect.
+DEFAULT_MODEL = os.environ.get("NTCODE_MODEL", "claude-sonnet-4-6")
 GIT_TIMEOUT = 30  # Git command timeout in seconds
 API_MAX_TOKENS = 8192  # Maximum tokens for API requests
 API_TIMEOUT = float(

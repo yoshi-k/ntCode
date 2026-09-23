@@ -1,3 +1,6 @@
+# Experimental
+This is experimental and currently in a non functioning state. 
+
 # ntCode AI Coding Assistant
 
 An AI-powered coding assistant that integrates with Claude AI to provide secure file manipulation, git workflow automation, and interactive development assistance. Built with security-first principles and comprehensive tool integration.

@@ -97,6 +97,14 @@ Available commands:
 # Provider command handler  (returns plain text; no print() calls)
 # ---------------------------------------------------------------------------
 
+# /config keys whose change requires rebuilding the active provider.
+_PROVIDER_KEYS = {
+    "LLM_PROVIDER", "DEFAULT_MODEL", "CALLING_CONVENTION",
+    "OPENAI_MODEL", "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MAX_TOKENS",
+    "OPENAI_TEMPERATURE", "OPENAI_TIMEOUT", "OPENAI_MAX_RETRIES",
+}
+
+
 def handle_provider_command(arg: str) -> str:
     """Handle all /provider sub-commands and return a plain-text result string.
 
@@ -253,14 +261,15 @@ def handle_config_command(arg: str) -> str:
         value = parts[2]          # raw string; ConfigManager coerces it
         try:
             result = config.set(key, value)
-            # For LLM_PROVIDER changes, also switch the active LLM provider
-            # so the change takes effect immediately without a restart.
-            if key == "LLM_PROVIDER":
+            # Settings that shape the client: rebuild the active provider so
+            # the change takes effect immediately without a restart.
+            if key in _PROVIDER_KEYS:
                 try:
+                    from utils import config as cfg_module
                     from utils.llm import switch_provider
-                    switch_provider(value.strip().lower())
+                    switch_provider(cfg_module.LLM_PROVIDER)
                 except Exception as exc:  # noqa: BLE001
-                    result += f"\n  (LLM provider switch: {exc})"
+                    result += f"\n  (LLM provider rebuild: {exc})"
             if key in {"LLM_PROVIDER", "OPENAI_MODEL", "DEFAULT_MODEL", "CALLING_CONVENTION", "SYSTEM_PROMPT_FILE"}:
                 result += "\n  Agent prompt/parser will refresh before the next LLM call."
             return f"\u2705 {result}"

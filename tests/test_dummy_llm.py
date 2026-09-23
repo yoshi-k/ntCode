@@ -12,7 +12,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Stub ANTHROPIC_API_KEY so utils.llm's module-level AnthropicLLM() doesn't
+# Stub ANTHROPIC_API_KEY so utils.llm's module-level provider doesn't
 # blow up when the environment variable is absent.
 os.environ.setdefault("ANTHROPIC_API_KEY", "dummy-key-for-tests")
 

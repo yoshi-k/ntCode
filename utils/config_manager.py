@@ -81,7 +81,7 @@ def _provider_validator(v):
 
 
 def _calling_convention_validator(v):
-    allowed = {"", "auto", "ntcode", "xml", "json_block", "gemma"}
+    allowed = {"", "auto", "native", "ntcode", "xml", "json_block", "gemma"}
     if v not in allowed:
         raise ValueError(
             f"CALLING_CONVENTION must be one of {sorted(allowed)!r}, got {v!r}"
@@ -137,7 +137,7 @@ _SCHEMA: dict[str, tuple[type, str, Any]] = {
     ),
     "CALLING_CONVENTION": (
         str,
-        "Tool-calling format override ('auto', 'ntcode', 'xml', 'json_block', 'gemma')",
+        "Tool calling for OpenAI-compatible endpoints: 'auto'/'native' (API tools) or a text format ('ntcode', 'xml', 'json_block', 'gemma')",
         _calling_convention_validator,
     ),
     "OPENAI_TEMPERATURE": (

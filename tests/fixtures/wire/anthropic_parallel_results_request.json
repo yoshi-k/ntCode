@@ -154,6 +154,5 @@
         }
       ]
     }
-  },
-  "legacy_xfail": "legacy sends each result as a separate plain-text user message"
+  }
 }

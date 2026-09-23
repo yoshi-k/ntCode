@@ -66,6 +66,5 @@
         }
       }
     ]
-  },
-  "legacy_xfail": "legacy ignores tool_calls whenever content is non-empty (openai_llm.py:469)"
+  }
 }

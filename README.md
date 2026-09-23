@@ -123,8 +123,8 @@ NTCODE_LOG_CONVERSATIONS=false python ntCode.py
 ```bash
 CALLING_CONVENTION=xml python ntCode.py
 ```
-- Forces a specific tool-calling convention instead of auto-detecting from the model name
-- Useful when a model uses a non-standard format or auto-detection picks the wrong family
+- Uses a text tool-calling format instead of native tool calling (OpenAI-compatible endpoints only)
+- Useful when the server or model does not support the `tools` field
 - Also settable as `NTCODE_CALLING_CONVENTION=xml`
 
 ---
@@ -246,16 +246,33 @@ Roles let you give the agent a focused persona, a restricted toolset, and a cust
 
 ### Tool-Calling Format
 
-ntCode auto-detects the correct tool-calling syntax from the model name:
+Claude (`LLM_PROVIDER=anthropic`) uses the API's **native tool calling**: tool
+definitions travel in the request, and Claude's `tool_use` blocks and the
+matching `tool_result`s are kept as structured messages. No text protocol is
+involved, and `CALLING_CONVENTION` has no effect.
 
-| Family | Syntax | Auto-detected for |
-|--------|--------|-------------------|
-| `ntcode` | `tool: NAME({...})` | Claude, GPT-\*, and all other models (default) |
+OpenAI-compatible endpoints (`LLM_PROVIDER=openai`) also use **native tool
+calling** by default: ntCode sends the tools in the request's `tools` field and
+the server parses the model's tool calls with the model's own chat template.
+This works with OpenAI, llama.cpp (start `llama-server` with `--jinja`), vLLM
+(`--enable-auto-tool-choice --tool-call-parser <name>`), Ollama, LM Studio and
+Groq, for any model whose template supports tools (Gemma 4, Qwen, Llama 3.x,
+Mistral, ...). `scripts/capture_wire_fixture.py` checks whether a server
+returns structured tool calls.
+
+For a server or model without tool support, choose a text format instead;
+ntCode then describes the tools in the system prompt and parses calls out of
+the reply text:
+
+| Family | Syntax | Typical models |
+|--------|--------|----------------|
+| `ntcode` | `tool: NAME({...})` | any instruction-following model |
 | `xml` | `<tool_call>{...}</tool_call>` | Qwen2.5-Instruct, Qwen3 |
 | `json_block` | ` ```json {"tool": ...} ``` ` | Mistral, Mixtral |
 | `gemma` | `<\|tool_call>call:tool:NAME({...})<tool_call\|>` | Gemma 3/4 instruct |
 
-To override auto-detection, set `CALLING_CONVENTION` (or `NTCODE_CALLING_CONVENTION`) to the family name:
+Set `CALLING_CONVENTION` (or `NTCODE_CALLING_CONVENTION`) to the family name;
+`auto`, `native` or unset means native tool calling:
 
 ```bash
 # In .env:

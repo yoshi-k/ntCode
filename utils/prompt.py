@@ -23,6 +23,11 @@ How it works
 Set ``CALLING_CONVENTION`` / ``NTCODE_CALLING_CONVENTION`` to override auto
 routing explicitly.
 
+With a native-tool-use provider (Claude through providers.anthropic) the
+tools travel in the API request instead, and ``{{TOOLS}}`` is replaced by a
+short note (:data:`NATIVE_TOOLS_NOTE`) rather than text-protocol
+instructions, which would contradict the native interface.
+
 The result is cached after the first call so that repeated calls (e.g. from
 the ``/prompt`` command and the agent startup) are cheap and always return
 the same string within a single process run.
@@ -42,15 +47,21 @@ from utils import config as cfg_module
 # Matches {{FILE:some/relative/path.md}}
 _FILE_DIRECTIVE_RE = re.compile(r"\{\{FILE:([^}]+)\}\}")
 
-# Module-level cache so we only build the prompt once per process.
-_cache: Optional[str] = None
+# Module-level cache so we only build the prompt once per process; keyed by
+# whether tools are native, since that changes the {{TOOLS}} block.
+_cache: dict[bool, str] = {}
+
+NATIVE_TOOLS_NOTE = (
+    "## Tools\n\n"
+    "Your tools are provided through native tool calling. Call them directly "
+    "whenever they help; each result is returned to you before you continue."
+)
 
 
 def invalidate_cache() -> None:
     """Clear the cached prompt so the next call to :func:`build_system_prompt`
     re-reads all files from disk.  Useful in tests."""
-    global _cache
-    _cache = None
+    _cache.clear()
 
 
 # Sentinel that stands in for literal '{{TOOLS}}' text found inside inlined
@@ -119,7 +130,7 @@ def _build_tool_block(allowed_tools: list[str] | None = None) -> str:
         filtered_registry = TOOL_REGISTRY
 
     # Determine the active model name.
-    # AnthropicLLM uses NTCODE_MODEL / DEFAULT_MODEL; OpenAILLM uses OPENAI_MODEL.
+    # Claude uses NTCODE_MODEL / DEFAULT_MODEL; OpenAILLM uses OPENAI_MODEL.
     if cfg_module.LLM_PROVIDER == "openai":
         model = cfg_module.OPENAI_MODEL
     else:
@@ -128,7 +139,19 @@ def _build_tool_block(allowed_tools: list[str] | None = None) -> str:
     return format_tools_for_provider(cfg_module.LLM_PROVIDER, model, filtered_registry)
 
 
-def build_system_prompt(allowed_tools: list[str] | None = None) -> str:
+def native_tools_active() -> bool:
+    """True when the configured provider takes tools through its API."""
+    if cfg_module.LLM_PROVIDER == "anthropic":
+        return True
+    from utils.tool_format import openai_tool_mode
+
+    return openai_tool_mode() == "native"
+
+
+def build_system_prompt(
+    allowed_tools: list[str] | None = None,
+    native_tools: bool | None = None,
+) -> str:
     """Load, resolve, and return the complete system prompt.
 
     The result is cached *only* when no role-level tool filter is in effect.
@@ -138,17 +161,21 @@ def build_system_prompt(allowed_tools: list[str] | None = None) -> str:
     Args:
         allowed_tools: If provided, only include these tool names in the
                        ``{{TOOLS}}`` section.  Empty list or None means all tools.
+        native_tools:  True when the provider receives tools through its API;
+                       ``{{TOOLS}}`` then becomes :data:`NATIVE_TOOLS_NOTE`.
+                       None (default) derives it from ``LLM_PROVIDER``.
 
     Raises
     ------
     FileNotFoundError
         If the stub file named by ``SYSTEM_PROMPT_FILE`` does not exist.
     """
-    global _cache
+    if native_tools is None:
+        native_tools = native_tools_active()
 
     # Only use cache when no role-level filter is active.
-    if _cache is not None and not allowed_tools:
-        return _cache
+    if not allowed_tools and native_tools in _cache:
+        return _cache[native_tools]
 
     stub_path = (BASE_DIR / cfg_module.SYSTEM_PROMPT_FILE).resolve()
     logger.info("prompt: loading stub from %s", stub_path)
@@ -165,7 +192,7 @@ def build_system_prompt(allowed_tools: list[str] | None = None) -> str:
     resolved = _resolve_file_directives(stub, BASE_DIR)
 
     # Step 2: inject tool descriptions at the one {{TOOLS}} in the stub.
-    tool_block = _build_tool_block(allowed_tools)
+    tool_block = NATIVE_TOOLS_NOTE if native_tools else _build_tool_block(allowed_tools)
     if "{{TOOLS}}" in resolved:
         resolved = resolved.replace("{{TOOLS}}", tool_block, 1)
     else:
@@ -176,6 +203,6 @@ def build_system_prompt(allowed_tools: list[str] | None = None) -> str:
 
     # Only cache the unfiltered prompt (no active role)
     if not allowed_tools:
-        _cache = resolved
+        _cache[native_tools] = resolved
     logger.info("prompt: built (%d chars)", len(resolved))
     return resolved

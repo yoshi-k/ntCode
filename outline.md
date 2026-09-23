@@ -34,7 +34,7 @@ Routes messages between the UI and the LLM; logs all interactions.
 
 ### Backend
 Tool implementations and LLM provider abstraction.
-- ✅ **DONE**: `LLM` abstract base class with `AnthropicLLM` and `OpenAILLM` implementations. Swapping providers requires only the `LLM_PROVIDER` env var.
+- ✅ **DONE**: Claude through `providers.anthropic.AnthropicProvider` (native tool use); OpenAI-compatible endpoints through the legacy `OpenAILLM`. Swapping providers requires only the `LLM_PROVIDER` env var.
 - ✅ **DONE**: `TokenRateLimiter` — sliding-window rate limiter (30 000 tokens / 60 s), configurable via `NTCODE_TOKEN_LIMIT_PER_MINUTE`.
 - 🔲 **PLANNED**: MCP abstraction for tools — standardised tool interface compatible with the Model Context Protocol.
 
@@ -117,7 +117,7 @@ Issue tracker starts as a plain `.md` file; later integrates with a real tracker
 - File operations: read / edit / list
 - Git workflow: status / diff / add / commit / log
 - Frontend ↔ agent split via `Connector`
-- LLM provider abstraction (`LLM` ABC, `AnthropicLLM`, `OpenAILLM`)
+- LLM provider abstraction (`providers.base.Provider`, `AnthropicProvider`; legacy `LLM` ABC with `OpenAILLM`)
 - Token rate limiting (`TokenRateLimiter`, 30 k TPM sliding window)
 - Conversation pruning (`_prune_conversation()`)
 - API timeout handling and exception humanisation

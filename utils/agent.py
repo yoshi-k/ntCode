@@ -30,10 +30,15 @@ from utils.config import (
     logger,
 )
 from utils import config as cfg_module
+import utils.llm as llm_module
 from utils.llm import execute_llm_call, SessionHeader, ConversationManager
 from utils.connector import Connector
 from tools.registry import TOOL_REGISTRY, get_full_system_prompt, execute_tool_safely
 from utils.tool_format import get_parser_for_provider
+from core.tool_schema import tool_specs
+from core.types import Message, ToolCall, ToolResult
+from providers.base import Provider
+from providers.errors import ProviderError
 
 # Default directory used when the user does not supply a path for save/load.
 _DEFAULT_SAVE_DIR = "saves"
@@ -198,7 +203,7 @@ def _handle_control(
                 connector.send_assistant(
                     f"\u274c No saved conversations found in {path}/"
                 )
-                return
+                return True
             path = str(candidates[-1])
         connector.send_assistant(_load_conversation(mgr, path))
 
@@ -209,7 +214,7 @@ def _handle_control(
             connector.send_assistant(
                 "\u274c Usage: /savepoint <name>"
             )
-            return
+            return True
         try:
             mgr.save_point(name)
             count = mgr.task_message_count
@@ -233,7 +238,7 @@ def _handle_control(
                 connector.send_assistant(
                     "\u274c No save points exist yet. Use /savepoint <name> first."
                 )
-            return
+            return True
         try:
             mgr.restore(name)
             count = mgr.task_message_count
@@ -396,6 +401,103 @@ def _handle_role_command(
 
 
 # ---------------------------------------------------------------------------
+# Native tool-use path (providers.base.Provider, e.g. Claude)
+# ---------------------------------------------------------------------------
+
+def _execute_tool_call(call: ToolCall, connector: Connector) -> ToolResult:
+    """Run one native tool call and return its result.
+
+    Every call gets a result, including unknown, rejected and failing
+    tools (with ``is_error``): native APIs reject a request in which a tool
+    call has no matching result.
+    """
+    def error(message: str) -> ToolResult:
+        payload = {"error": message, "tool_name": call.name, "success": False}
+        return ToolResult(call.id, json.dumps(payload), is_error=True)
+
+    if call.name not in TOOL_REGISTRY:
+        logger.warning("Model called unknown tool %r", call.name)
+        return error(f"Unknown tool: {call.name}")
+
+    if call.raw_arguments is not None:
+        logger.warning("Tool %s called with invalid arguments: %r", call.name, call.raw_arguments)
+        return error(
+            f"The arguments are not a valid JSON object: {call.raw_arguments!r}. "
+            "Call the tool again with a JSON object matching its parameters."
+        )
+
+    if cfg_module.VERBOSE_MODE:
+        connector.request_approval(call.name, call.args)
+        approval = connector.receive_approval_response_blocking(timeout=60)
+        if approval is None or not approval.get("approved", False):
+            logger.info("Tool %s rejected by user (verbose mode)", call.name)
+            connector.send_assistant(f"Tool {call.name} was rejected by user.")
+            return error("Tool execution rejected by user.")
+
+    try:
+        if DEBUG_MODE:
+            logger.debug("Executing tool %s args=%s", call.name, call.args)
+        result = execute_tool_safely(call.name, TOOL_REGISTRY[call.name], call.args)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Tool execution failed for %s: %s", call.name, exc)
+        return error(f"Tool execution failed: {exc}")
+
+    if DEBUG_MODE:
+        logger.debug("Tool %s result: %s", call.name, result)
+    is_error = isinstance(result, dict) and bool(result.get("error"))
+    return ToolResult(
+        call.id, json.dumps(result, ensure_ascii=False, default=str), is_error=is_error
+    )
+
+
+def _native_step(
+    provider: Provider,
+    mgr: ConversationManager,
+    connector: Connector,
+    allowed_tools: Optional[List[str]],
+) -> bool:
+    """One model call plus its tool calls.  Returns True when the turn is over.
+
+    The turn is over when the model replies without tool calls (the reply is
+    published), refuses, or the provider fails (the error is published and
+    nothing is added to the history).  Otherwise the tool results are added
+    and the caller calls the model again.
+    """
+    mgr.session_header = SessionHeader(
+        system_prompt=get_full_system_prompt(allowed_tools=allowed_tools, native_tools=True)
+    )
+    system = mgr.session_header.system_with_docs()
+    tools = tool_specs(TOOL_REGISTRY, allowed_tools)
+
+    try:
+        turn = provider.complete(system, mgr.messages(), tools)
+    except ProviderError as exc:
+        logger.error("Provider error (%s): %s", type(exc).__name__, exc)
+        connector.send_assistant(f"\u274c {exc.user_message()}")
+        return True
+
+    msg = turn.message
+    if turn.stop_reason == "refusal":
+        note = "\u26a0\ufe0f The model declined this request."
+        connector.send_assistant(f"{note}\n{msg.text}" if msg.text else note)
+        return True
+
+    if msg.content:
+        mgr.add_message(msg)
+
+    if not msg.tool_calls:
+        text = msg.text or "(The model returned an empty reply.)"
+        if turn.stop_reason == "max_tokens":
+            text += "\n\n(The reply was cut off at the max_tokens limit.)"
+        connector.send_assistant(text)
+        return True
+
+    results = [_execute_tool_call(call, connector) for call in msg.tool_calls]
+    mgr.add_message(Message.tool_results(results))
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Agent loop
 # ---------------------------------------------------------------------------
 
@@ -408,10 +510,12 @@ def run_agent(connector: Connector) -> None:
     produces a plain (non-tool) response, publishes it via
     :meth:`~utils.connector.Connector.send_assistant`, and waits again.
 
-    Uses ConversationManager to maintain a session-header cache point:
-    the system prompt and documentation files are sent with cache_control
-    markers so Claude can reuse its server-side KV-cache across turns,
-    reducing latency and token cost for the stable prefix.
+    Two paths, chosen per model call from the active provider:
+
+    * A providers.base.Provider (Claude, OpenAI-compatible) uses native tool calling: the reply
+      and the tool results are stored as typed messages (see _native_step).
+    * A legacy LLM (OpenAILLM, DummyLLM) uses the text protocol: tool calls
+      are parsed from the reply text and results fed back as user text.
 
     Exits cleanly when the connector is shut down.
     """
@@ -466,6 +570,14 @@ def run_agent(connector: Connector) -> None:
                 active_role = get_active_role()
                 allowed_tools = active_role.tools if active_role and active_role.tools else None
                 invalidate_cache()
+
+                provider = llm_module.llm
+                if isinstance(provider, Provider):
+                    if _native_step(provider, mgr, connector, allowed_tools):
+                        break
+                    continue
+
+                # Legacy text protocol (OpenAILLM, DummyLLM).
                 mgr.session_header = SessionHeader(
                     system_prompt=get_full_system_prompt(allowed_tools=allowed_tools)
                 )

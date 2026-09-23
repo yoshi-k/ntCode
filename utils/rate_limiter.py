@@ -21,7 +21,7 @@ class TokenRateLimiter:
     limit.  The implementation is thread-safe so it works correctly even if
     multiple threads share the same limiter instance.
 
-    Usage pattern inside :class:`AnthropicLLM`:
+    Usage pattern inside a provider (e.g. ``AnthropicProvider``):
 
     1. Before calling the API, call :meth:`wait_for_capacity` with a
        conservative *estimated* token count.  This call will block until
@@ -163,5 +163,5 @@ class TokenRateLimiter:
         )
 
 
-# Module-level singleton - shared by all AnthropicLLM instances.
+# Module-level singleton - shared by all providers.
 _rate_limiter = TokenRateLimiter()

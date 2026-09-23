@@ -37,6 +37,32 @@ Holds data that the agent writes and reads across sessions.  All paths are insid
 
 ---
 
+## `core/` – Provider-neutral types
+
+The target of the backend rewrite: everything above the provider adapters
+should work with these types, and wire formats are converted at the edge.
+
+| File | Description |
+|------|-------------|
+| `types.py` | Conversation types: `Message` (role + tuple of blocks), `TextBlock`, `ToolCall` (id, name, args), `ToolResult` (call_id, content, is_error), plus `ToolSpec`, `Usage` and `AssistantTurn`. `message_to_dict()` / `message_from_dict()` convert to the JSON form used by saved conversations and the wire-contract fixtures. |
+| `tool_schema.py` | **The only tool-description generator.** `tool_specs(registry, allowed)` turns tool functions into `ToolSpec`s with JSON-Schema parameters (from type hints) and descriptions (from `:param` docstrings). Used by native OpenAI `tools` and by every text dialect's `{{TOOLS}}` block. Unsupported annotations raise `TypeError`. |
+
+---
+
+## `providers/` – Model API adapters
+
+Each adapter converts `core.types` to one API's wire format and back, and
+raises typed errors instead of returning error text.
+
+| File | Description |
+|------|-------------|
+| `base.py` | `Provider` interface: `complete(system, messages, tools) -> AssistantTurn`. |
+| `errors.py` | `ProviderError` and subclasses (`ProviderAuthError`, `ProviderRateLimitError`, `ProviderTimeoutError`, `ProviderConnectionError`, `ProviderRequestError`, `ProviderServerError`); `user_message()` gives the text to show. |
+| `openai_chat.py` | `OpenAIChatProvider`: any OpenAI-compatible Chat Completions server (OpenAI, llama.cpp `--jinja`, vLLM, Ollama, LM Studio) through the `openai` SDK with native tool calling: `tools` function definitions, assistant `tool_calls`, one `role: "tool"` message per result. Invalid argument JSON is kept in `ToolCall.raw_arguments`; `finish_reason` is mapped to the shared stop reasons. The default for `LLM_PROVIDER=openai` unless `CALLING_CONVENTION` names a text format. |
+| `anthropic.py` | `AnthropicProvider`: Claude with native tool use (`tool_use` / `tool_result` blocks, parallel results in one user message), cache breakpoints on the system block and at the end of the conversation (no beta header), thinking and other unknown blocks kept as `OpaqueBlock`s and sent back unchanged, SDK exceptions mapped to `ProviderError`s. |
+
+---
+
 ## `utils/` – Backend infrastructure
 
 Shared low-level modules that every other layer depends on.
@@ -48,12 +74,12 @@ Contains no tool logic, no UI, and no LLM call-site code beyond the provider abs
 | `prompt.py` | System-prompt builder. `build_system_prompt()` loads the stub file named by `SYSTEM_PROMPT_FILE`, resolves every `{{FILE:path}}` directive by inlining the named file, and replaces `{{TOOLS}}` with the formatted descriptions of all registered tools. Result is module-level cached; call `invalidate_cache()` to force a rebuild (useful in tests). This is the single source of truth consumed by both `tools/registry.py` (`get_full_system_prompt()`) and the `/prompt` command. |
 | `config.py` | Single source of truth for all constants and runtime settings. Reads every `NTCODE_*` environment variable, configures the `logging` framework (handlers for console and `ntcode.log`), exposes the named `logger`, defines ANSI colour constants for the TUI, and sets `ALLOWED_BASE_PATHS`, `MAX_FILE_SIZE`, model defaults, timeout values, and the token-rate-limit constants. |
 | `security.py` | Path-safety and git-safety helpers used by every tool. `resolve_abs_path()` turns relative paths into absolute ones; `validate_file_access()` enforces sandbox restrictions and blocks path-traversal attempts; `validate_git_operation()` confirms a git repository is present; `run_git_command()` wraps `subprocess.run` with timeout handling and security checks. |
-| `rate_limiter.py` | `TokenRateLimiter` class implementing a sliding-window (60-second) token-consumption budget. `wait_for_capacity(estimated)` blocks until headroom is available and returns a reservation ID; `record_actual(id, actual)` corrects the reservation once the real API token counts are known. A module-level `_rate_limiter` singleton is shared by `AnthropicLLM`. |
-| `llm.py` | LLM provider abstraction. `LLM` is an abstract base class with a single `call()` method. `AnthropicLLM` implements it: estimates tokens, calls `_rate_limiter.wait_for_capacity()`, makes the Anthropic API request with timeout support, then corrects the reservation. `execute_llm_call()` is the application-level wrapper that separates the system message, delegates to the active `llm` singleton, and catches and humanises all provider exceptions (timeout, rate-limit, auth, connection errors). |
+| `rate_limiter.py` | `TokenRateLimiter` class implementing a sliding-window (60-second) token-consumption budget. `wait_for_capacity(estimated)` blocks until headroom is available and returns a reservation ID; `record_actual(id, actual)` corrects the reservation once the real API token counts are known. A module-level `_rate_limiter` singleton is shared by the providers. |
+| `llm.py` | Active provider and conversation state. `llm` is the active provider: `providers.anthropic.AnthropicProvider` for Claude, `providers.openai_chat.OpenAIChatProvider` for OpenAI-compatible endpoints (both native tool use), or a legacy text-protocol `LLM` (`OpenAILLM` when `CALLING_CONVENTION` names a text format, `DummyLLM`) with a single `call()` method. `switch_provider()` replaces it. `SessionHeader` holds the system prompt and documentation files (`system_with_docs()` for native providers); `ConversationManager` stores the task conversation as `core.types.Message`s. `execute_llm_call()` wraps legacy `LLM`s only, turning their exceptions into error text. |
 | `openai_llm.py` | OpenAI-specific implementation of the LLM provider abstraction. |
 | `dummy_llm.py` | `DummyLLM` — a file-replay subclass of `LLM` for tests and offline development. Reads a plain-text replay file (one response per non-blank, non-comment line) and returns each line in turn via `call(system, messages)`, cycling back to the start when exhausted. Returns a `_FakeUsage` object that mirrors Anthropic's usage type so `execute_llm_call()` and logging code work without modification. No API calls, no rate limiting, no credentials needed. Extras: `reset()` restarts the replay; `reload(path)` re-reads from disk; `response_count` and `current_index` properties for assertion in tests. |
 | `config_manager.py` | `ConfigManager` class and module-level `config` singleton. Owns all mutable runtime settings as a typed dict, validated against a schema. `get(key)` / `set(key, value)` (type coercion from strings + validation) / `reset(key=None)` / `show(key=None)` (grouped display with change markers `*`) / `save(path)` / `load(path)` (JSON round-trip; skips unknown keys, reports per-key errors). Mirrors every change back into `utils.config` module-level names so legacy call-sites stay in sync. Sensitive keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) are masked in display. Initialised from `utils.config` at import time so all env-var overrides are preserved. |
-| `tool_format.py` | **Provider-aware tool formatter and parser.** `_detect_family(provider, model)` maps a model name to a format family (`ntcode`, `xml`, `json_block`, or `gemma`). `format_tools_for_provider(provider, model, tool_registry)` returns the `{{TOOLS}}` replacement string in the syntax the target model expects. `get_parser_for_provider(provider, model)` returns the matching parser callable `(text) -> List[Tuple[name, args]]`. Four built-in families: **ntcode** — original `tool: NAME({...})` protocol (Claude, GPT-*); **xml** — `<tool_call>{...}</tool_call>` blocks (Qwen2.5-Instruct, Qwen3); **json_block** — fenced ` ```json ` blocks (Mistral, Mixtral); **gemma** — `<|tool_call>call:tool:NAME({...})<tool_call|>` blocks (Gemma 3/4 instruct), with JS-style unquoted-key tolerance. Adding a new family requires one formatter function, one parser function, and entries in `_FORMAT_REGISTRY` / `_PARSER_REGISTRY` / `_detect_family()`. |
+| `tool_format.py` | **Provider-aware tool formatter and parser.** `_detect_family(provider, model)` maps a model name to a format family (`ntcode`, `xml`, `json_block`, or `gemma`). `format_tools_for_provider(provider, model, tool_registry)` returns the `{{TOOLS}}` replacement string in the syntax the target model expects. `get_parser_for_provider(provider, model)` returns the matching parser callable `(text) -> List[Tuple[name, args]]`. Four built-in families: **ntcode** — original `tool: NAME({...})` protocol (GPT-* and other OpenAI-compatible models; Claude uses native tool calling instead); **xml** — `<tool_call>{...}</tool_call>` blocks (Qwen2.5-Instruct, Qwen3); **json_block** — fenced ` ```json ` blocks (Mistral, Mixtral); **gemma** — `<|tool_call>call:tool:NAME({...})<tool_call|>` blocks (Gemma 3/4 instruct), with JS-style unquoted-key tolerance. Adding a new family requires one formatter function, one parser function, and entries in `_FORMAT_REGISTRY` / `_PARSER_REGISTRY` / `_detect_family()`. |
 
 ---
 
@@ -138,6 +164,23 @@ One `.toml` file per role. System-prompt stubs for roles that override the defau
 | `test_openai_llm_parse.py` | Tests for parsing OpenAI-specific tool call formats. |
 | `test_dummy_llm.py` | Tests for the `DummyLLM` implementation. |
 | `test_memory_tools.py` | Unit tests for `memory_store`, `memory_search`, `memory_list`, and `search_codebase`. All memory tests use `tmp_path` to redirect `_MEMORY_DIR` — no real `storage/memory/` files touched. Covers: file creation, key validation, tag filtering, case-insensitivity, empty/missing directory handling, regex errors, binary file skipping, glob filtering, sandbox enforcement. |
+| `conftest.py` | Autouse fixture that snapshots and restores global runtime state (`utils.config` constants, `ConfigManager` values, active LLM, parser and role) around every test, so results do not depend on test order. |
+| `test_core_types.py` | Tests for `core/types.py`: constructors, role/block validation, immutability, dict round trip (including the old string save format), and that every fixture conversation parses. |
+| `test_tool_schema.py` | Tests for `core/tool_schema.py`: annotation-to-JSON-Schema mapping, docstring parsing, error cases, a spec for every registered tool, and the `List[str]` → array regression in the native OpenAI schema. |
+| `test_conversation_manager.py` | Tests for `ConversationManager`: text API format, pruning that never starts at an assistant message or orphans a tool result, lossless save/restore, old save format, save points. |
+| `test_anthropic_provider.py` | `AnthropicProvider` beyond the fixtures: request building (cache breakpoints, block order, dropped empty blocks), thinking-block round trip, refusal, usage, error mapping for each HTTP status, timeouts and connection errors, rate limiter use. |
+| `test_openai_provider.py` | `OpenAIChatProvider` beyond the fixtures: request building, finish-reason mapping, usage with cached tokens, invalid or missing arguments and ids, error mapping. |
+| `test_provider_selection.py` | Which client is built for each `LLM_PROVIDER` / `CALLING_CONVENTION`, `switch_provider()`, `/config set` rebuilding the client, the native prompt for OpenAI endpoints, and a Claude conversation continuing on an OpenAI endpoint. |
+| `test_agent_native.py` | Agent loop with a native provider: tool call round trip, parallel results, unknown/failing tools still answered, provider errors and refusals published but not stored, max_tokens note, bare `/savepoint` regression, and one end-to-end run of `AnthropicProvider` through `run_agent` over a mock transport. |
+| `test_wire_contract.py` / `wire_backends.py` | Wire-contract tests: each JSON file in `fixtures/wire/` specifies an HTTP request or response for a provider and tool mode (see `fixtures/wire/README.md`). `wire_backends.py` runs them against the current code through a mock HTTP transport; cases it gets wrong are strict xfails. |
+
+---
+
+## `scripts/` – Developer scripts
+
+| File | Description |
+|------|-------------|
+| `capture_wire_fixture.py` | Sends one native tool-calling request to a real Anthropic or OpenAI-compatible server and saves the raw response as a wire-contract fixture in `tests/fixtures/wire/captured/`. |
 
 ---
 

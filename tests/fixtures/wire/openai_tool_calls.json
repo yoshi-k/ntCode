@@ -66,6 +66,5 @@
         }
       }
     ]
-  },
-  "legacy_xfail": "legacy rewrites tool_calls as 'tool:' text, returns that as the reply text, and drops the call id"
+  }
 }

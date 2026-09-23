@@ -66,6 +66,5 @@
         }
       }
     ]
-  },
-  "legacy_xfail": "legacy rewrites tool_calls as 'tool:' text, which the Gemma text parser then ignores"
+  }
 }

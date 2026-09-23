@@ -12,20 +12,24 @@ Requests are intercepted with a mock HTTP transport (see
 tests/wire_backends.py), so these tests check the exact payload the code puts
 on the wire, not an intermediate structure.
 
-Cases the current code gets wrong carry ``legacy_xfail`` and are run as
-strict xfails against the legacy backend: they must fail today, and a fix
-that makes one pass turns it into a failure until the marker is removed.
+Cases the code currently handling a profile gets wrong carry
+``legacy_xfail`` and are run as strict xfails: they must fail today, and a
+fix that makes one pass turns it into a failure until the marker is removed.
+They must fail with an AssertionError, or with the builtin exception named
+in ``legacy_xfail_raises``, so an unrelated crash is not mistaken for the
+expected failure.
 """
 
 from __future__ import annotations
 
+import builtins
 import json
 from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
 
-from tests.wire_backends import BACKEND_NAME, CapturedRequest, make_backend
+from tests.wire_backends import CapturedRequest, make_backend
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "wire"
 FIXTURES = sorted(FIXTURE_DIR.glob("*.json"))
@@ -162,8 +166,13 @@ def _check_request(fixture: Dict[str, Any]) -> None:
 @pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.stem)
 def test_wire_contract(path: Path, request: pytest.FixtureRequest) -> None:
     fixture = _load(path)
-    if BACKEND_NAME == "legacy" and "legacy_xfail" in fixture:
-        request.applymarker(pytest.mark.xfail(reason=fixture["legacy_xfail"], strict=True))
+    if "legacy_xfail" in fixture:
+        # Only the expected kind of failure counts; anything else (an import
+        # error, a bug in the harness) is reported as a real failure.
+        raises = getattr(builtins, fixture.get("legacy_xfail_raises", "AssertionError"))
+        request.applymarker(pytest.mark.xfail(
+            reason=fixture["legacy_xfail"], strict=True, raises=raises,
+        ))
 
     if fixture["kind"] == "response":
         _check_response(fixture)

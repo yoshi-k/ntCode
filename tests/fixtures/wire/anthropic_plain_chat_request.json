@@ -50,6 +50,5 @@
     "headers_absent": [
       "anthropic-beta"
     ]
-  },
-  "legacy_xfail": "legacy sends the prompt-caching-2024-07-31 beta header"
+  }
 }

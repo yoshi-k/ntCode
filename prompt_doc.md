@@ -187,52 +187,22 @@ JSON.
 tool_result({"key": "value", ...})
 ```
 
-#### Native function-calling fallback (real OpenAI endpoints)
+#### Native tool calling (the default)
 
-Real OpenAI endpoints (GPT-4o, GPT-4-turbo, etc.) may ignore the
-text-protocol instructions above and instead respond using the OpenAI native
-function-calling format, where `choices[0].message.content` is `null` and
-tool invocations appear in `choices[0].message.tool_calls`:
+The text formats in this section are only used when `CALLING_CONVENTION`
+names one of them. By default both providers use native tool calling:
 
-```json
-{
-  "choices": [{
-    "message": {
-      "role": "assistant",
-      "content": null,
-      "tool_calls": [{
-        "id": "call_abc123",
-        "type": "function",
-        "function": {
-          "name": "read_file",
-          "arguments": "{\"filename\": \"README.md\"}"
-        }
-      }]
-    }
-  }]
-}
-```
+- **Claude** (`providers/anthropic.py`): tools are sent as `tools` with
+  `input_schema`; calls come back as `tool_use` blocks and results go back as
+  `tool_result` blocks.
+- **OpenAI-compatible endpoints** (`providers/openai_chat.py`): tools are sent
+  as `tools` function definitions; the server parses the model's tool-call
+  syntax with the model's chat template and returns `tool_calls`; results go
+  back as `role: "tool"` messages with the matching `tool_call_id`.
 
-`OpenAILLM._parse()` in `utils/openai_llm.py` detects this shape
-(content is null/empty and tool_calls is non-empty) and automatically
-converts each `tool_calls` entry into an ntcode-format text line:
-
-```
-tool: read_file({"filename": "README.md"})
-```
-
-This converted text is then returned to the agent and handled by the
-standard `_parse_ntcode()` parser — no changes are needed anywhere else
-in the stack.  The conversion is logged at INFO level:
-
-```
-INFO  [OpenAILLM] Converted 1 native tool_call(s) to ntcode text.
-```
-
-This means ntCode works correctly with real OpenAI endpoints regardless
-of whether they follow the text-protocol instructions or use their native
-format.  Local models served via llama.cpp / Ollama (which do not implement
-native function-calling) always use the text-protocol path.
+In both cases the conversation is stored as `core.types` messages with
+`ToolCall` and `ToolResult` blocks, and `{{TOOLS}}` in the system prompt is
+replaced by a short note (`NATIVE_TOOLS_NOTE`).
 
 ---
 
@@ -337,8 +307,11 @@ tool (same schema shape as the xml formatter).
 
 ## 5. How the active convention is selected
 
-`_detect_family(provider, model)` in `utils/tool_format.py` applies a
-sequence of substring checks against the **lowercased model name string**:
+Native tool calling is used unless `CALLING_CONVENTION` names a text format
+(`utils.tool_format.openai_tool_mode()`). For the legacy text path,
+`_detect_family(provider, model)` in `utils/tool_format.py` returns the
+explicit `CALLING_CONVENTION`; its model-name rules below only matter for
+code that calls it without one set:
 
 ```python
 def _detect_family(provider: str, model: str) -> str:
@@ -582,13 +555,18 @@ or as tool results from `read_file`.
 
 ## 8. Prompt caching
 
-ntCode uses Anthropic's server-side prompt cache (`cache_control: ephemeral`)
-via the `SessionHeader` / `ConversationManager` classes in `utils/llm.py`.
+With Claude, `providers/anthropic.py` sets two cache breakpoints on every
+request (prompt caching is generally available; no beta header):
 
-The **session header** — system prompt + inlined files — is marked as
-cacheable.  Claude reuses its KV-cache for this prefix across all turns in a
-session, so you only pay full input-token cost once per session rather than
-once per turn.
+- a `cache_control` marker on the **system block**, which holds the system
+  prompt plus any documentation files not already inlined
+  (`SessionHeader.system_with_docs()`); the tool definitions come before it
+  and are cached with it;
+- top-level **automatic caching**, which places a breakpoint at the end of the
+  conversation, so each step of a tool loop reuses the previous step's
+  prefix.
+
+Check `cache_read` in the `[anthropic]` log lines to confirm cache hits.
 
 **Implications for prompt changes:**
 - The cache is per-process.  Restarting ntCode starts a fresh cache.
@@ -598,9 +576,9 @@ once per turn.
 - `{{FILE:…}}` directives are resolved once at startup.  If you edit an
   inlined file mid-session, restart ntCode to pick up the changes.
 
-The prompt cache is transparent to the tool-format system: the cached prefix
-always contains the formatted tool descriptions for the active model, chosen
-at startup.
+With native tool calling the `{{TOOLS}}` placeholder becomes a short note
+(`NATIVE_TOOLS_NOTE` in `utils/prompt.py`), because the tool definitions are
+sent in the request's `tools` field instead.
 
 ---
 

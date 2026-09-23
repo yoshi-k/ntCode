@@ -34,7 +34,7 @@ Routes messages between the UI and the LLM; logs all interactions.
 
 ### Backend
 Tool implementations and LLM provider abstraction.
-- ✅ **DONE**: Claude through `providers.anthropic.AnthropicProvider` (native tool use); OpenAI-compatible endpoints through the legacy `OpenAILLM`. Swapping providers requires only the `LLM_PROVIDER` env var.
+- ✅ **DONE**: Native tool calling for Claude (`providers.anthropic.AnthropicProvider`) and OpenAI-compatible endpoints (`providers.openai_chat.OpenAIChatProvider`), with text dialects (`providers.text_tools`) as a fallback. Swapping providers requires only the `LLM_PROVIDER` env var, `/provider` or `/config set`.
 - ✅ **DONE**: `TokenRateLimiter` — sliding-window rate limiter (30 000 tokens / 60 s), configurable via `NTCODE_TOKEN_LIMIT_PER_MINUTE`.
 - 🔲 **PLANNED**: MCP abstraction for tools — standardised tool interface compatible with the Model Context Protocol.
 
@@ -87,7 +87,6 @@ Issue tracker starts as a plain `.md` file; later integrates with a real tracker
 ## Planned Features
 
 ### High Priority
-- [ ] Fix JSON parsing crash in `extract_tool_invocations()` — see [`bugs.md`](bugs.md) #1
 - [ ] Automatic file backup before destructive edits
 - [ ] Confirmation prompt for destructive operations
 
@@ -117,10 +116,10 @@ Issue tracker starts as a plain `.md` file; later integrates with a real tracker
 - File operations: read / edit / list
 - Git workflow: status / diff / add / commit / log
 - Frontend ↔ agent split via `Connector`
-- LLM provider abstraction (`providers.base.Provider`, `AnthropicProvider`; legacy `LLM` ABC with `OpenAILLM`)
+- Provider abstraction (`providers.base.Provider`: `AnthropicProvider`, `OpenAIChatProvider`, `TextToolsProvider`) on provider-neutral `core.types` messages
 - Token rate limiting (`TokenRateLimiter`, 30 k TPM sliding window)
-- Conversation pruning (`_prune_conversation()`)
-- API timeout handling and exception humanisation
+- Conversation pruning that keeps tool calls with their results (`ConversationManager.prune_task_messages()`)
+- Typed provider errors (`providers.errors`) shown to the user without polluting the conversation
 - Fully configurable via env vars (`config.py`, `.env.example`)
 - Unit and integration test suite (`tests/`)
-- `DummyLLM` for offline / deterministic testing
+- `DummyProvider` and wire-contract fixtures for offline / deterministic testing

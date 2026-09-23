@@ -21,20 +21,14 @@ import json
 import os
 import pathlib
 import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from utils.config import (
-    DEBUG_MODE,
-    VERBOSE_MODE,
-    MAX_CONVERSATION_LENGTH,
-    logger,
-)
+from utils.config import DEBUG_MODE, logger
 from utils import config as cfg_module
 import utils.llm as llm_module
-from utils.llm import execute_llm_call, SessionHeader, ConversationManager
+from utils.llm import SessionHeader, ConversationManager
 from utils.connector import Connector
 from tools.registry import TOOL_REGISTRY, get_full_system_prompt, execute_tool_safely
-from utils.tool_format import get_parser_for_provider
 from core.tool_schema import tool_specs
 from core.types import Message, ToolCall, ToolResult
 from providers.base import Provider
@@ -50,74 +44,6 @@ def _default_save_path() -> str:
     p = pathlib.Path(_DEFAULT_SAVE_DIR) / f"conversation-{timestamp}.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     return str(p)
-
-
-# ---------------------------------------------------------------------------
-# Tool invocation parser
-# ---------------------------------------------------------------------------
-
-def _resolve_active_model() -> str:
-    """Return the model name string for the currently active provider."""
-    import os
-    if cfg_module.LLM_PROVIDER == "openai":
-        return cfg_module.OPENAI_MODEL
-    return cfg_module.DEFAULT_MODEL
-
-
-# Parser selected at agent startup based on the active provider/model.
-# Stored at module level so it is chosen once and reused for every turn.
-_active_parser = get_parser_for_provider(cfg_module.LLM_PROVIDER, _resolve_active_model())
-
-
-def _refresh_active_parser() -> None:
-    """Refresh the tool-call parser for the current provider/model settings."""
-    global _active_parser
-    _active_parser = get_parser_for_provider(
-        cfg_module.LLM_PROVIDER,
-        _resolve_active_model(),
-    )
-
-
-def extract_tool_invocations(text: str) -> List[Tuple[str, Dict[str, Any]]]:
-    """Return list of (tool_name, args) extracted from *text*.
-
-    Delegates to the provider-aware parser selected from the current
-    provider/model settings. The parser is refreshed after role/provider
-    changes so runtime configuration changes do not leave a stale parser.
-
-    Lines that do not match the expected format, reference unknown tool names,
-    or carry malformed JSON are logged as warnings and silently skipped.
-    """
-    invocations = _active_parser(text)
-
-    if DEBUG_MODE and invocations:
-        logger.debug(
-            "Extracted %d tool invocation(s): %s",
-            len(invocations),
-            [n for n, _ in invocations],
-        )
-
-    return invocations
-
-
-# ---------------------------------------------------------------------------
-# Error-response detection
-# ---------------------------------------------------------------------------
-
-# Emoji prefixes used by execute_llm_call() to signal provider-level errors.
-_ERROR_PREFIXES = (
-    "\u23f1\ufe0f",   # timeout
-    "\U0001f6ab",     # rate limit
-    "\U0001f310",     # connection
-    "\U0001f511",     # auth
-    "\u274c",         # API error
-    "\U0001f4a5",     # unexpected
-)
-
-
-def _is_error_response(text: str) -> bool:
-    """Return True if *text* is an error sentinel from execute_llm_call()."""
-    return any(text.startswith(p) for p in _ERROR_PREFIXES)
 
 
 # ---------------------------------------------------------------------------
@@ -177,10 +103,8 @@ def _handle_control(
 ) -> bool:
     """Execute a control command and publish a status reply via *connector*.
 
-    Returns:
-        True if the caller should continue waiting for the next user message.
-        False if the caller should continue the tool-execution loop (e.g. role
-        changes that trigger LLM calls with tool invocations).
+    Control commands never call the model; the caller waits for the next
+    user message afterwards.  Returns True once handled.
     """
     command = msg.get("command", "")
     payload = msg.get("payload", "") or ""
@@ -282,19 +206,15 @@ def _handle_role_command(
     mgr: ConversationManager,
     connector: "Connector",
 ) -> bool:
-    """Handle role load/unload/show commands and rebuild system prompt.
+    """Handle role load/unload/show/list commands.  Returns True once handled.
 
-    Returns:
-        True if the caller should continue waiting for the next user message.
-        False if the caller should continue the tool-execution loop (e.g. role
-        changes that trigger LLM calls with tool invocations).
-
-    When a role is loaded or unloaded, the system prompt must be rebuilt
-    with the correct tool list, and the LLM must be notified about the change.
+    Loading or unloading a role changes the allowed tools and possibly the
+    prompt file and provider settings (utils.roles rebuilds the provider);
+    the agent loop rebuilds the system prompt and tool list before the next
+    model call.
     """
     from utils.roles import list_roles, load_role, unload_role, get_active_role
     from utils.prompt import invalidate_cache
-    from tools.registry import get_full_system_prompt
 
     parts = payload.split()
     sub = parts[0].lower() if parts else ""
@@ -327,14 +247,8 @@ def _handle_role_command(
         name_or_path = parts[1]
         try:
             role = load_role(name_or_path)
-            # Rebuild the system prompt with the new tool list
+            # The prompt and tool list are rebuilt before the next model call.
             invalidate_cache()
-            allowed_tools = role.tools if role.tools else None
-            new_system_prompt = get_full_system_prompt(allowed_tools=allowed_tools)
-            # Update the session header with the new system prompt
-            mgr.session_header = SessionHeader(system_prompt=new_system_prompt)
-
-            _refresh_active_parser()
             connector.set_role_name(role.name)
 
             tool_list = ", ".join(role.tools) if role.tools else "all available tools"
@@ -377,12 +291,7 @@ def _handle_role_command(
             return True
         rname = active.name
         unload_role()
-        # Rebuild the system prompt without role restrictions
         invalidate_cache()
-        new_system_prompt = get_full_system_prompt(allowed_tools=None)
-        mgr.session_header = SessionHeader(system_prompt=new_system_prompt)
-
-        _refresh_active_parser()
         connector.set_role_name("default")
 
         role_notification = (
@@ -401,11 +310,11 @@ def _handle_role_command(
 
 
 # ---------------------------------------------------------------------------
-# Native tool-use path (providers.base.Provider, e.g. Claude)
+# One model step: a provider call plus its tool calls
 # ---------------------------------------------------------------------------
 
 def _execute_tool_call(call: ToolCall, connector: Connector) -> ToolResult:
-    """Run one native tool call and return its result.
+    """Run one tool call and return its result.
 
     Every call gets a result, including unknown, rejected and failing
     tools (with ``is_error``): native APIs reject a request in which a tool
@@ -463,9 +372,7 @@ def _native_step(
     nothing is added to the history).  Otherwise the tool results are added
     and the caller calls the model again.
     """
-    mgr.session_header = SessionHeader(
-        system_prompt=get_full_system_prompt(allowed_tools=allowed_tools, native_tools=True)
-    )
+    mgr.session_header = SessionHeader(system_prompt=get_full_system_prompt())
     system = mgr.session_header.system_with_docs()
     tools = tool_specs(TOOL_REGISTRY, allowed_tools)
 
@@ -510,28 +417,14 @@ def run_agent(connector: Connector) -> None:
     produces a plain (non-tool) response, publishes it via
     :meth:`~utils.connector.Connector.send_assistant`, and waits again.
 
-    Two paths, chosen per model call from the active provider:
-
-    * A providers.base.Provider (Claude, OpenAI-compatible) uses native tool calling: the reply
-      and the tool results are stored as typed messages (see _native_step).
-    * A legacy LLM (OpenAILLM, DummyLLM) uses the text protocol: tool calls
-      are parsed from the reply text and results fed back as user text.
+    Each model call goes through the active provider (utils.llm.llm, a
+    providers.base.Provider); the reply and the tool results are stored as
+    typed core.types messages (see _native_step).
 
     Exits cleanly when the connector is shut down.
     """
-    # Determine the active role's tool restrictions (if any)
-    from utils.roles import get_active_role
-    active_role = get_active_role()
-    allowed_tools = active_role.tools if active_role and active_role.tools else None
-
-    system_prompt = get_full_system_prompt(allowed_tools=allowed_tools)
-    header = SessionHeader(system_prompt=system_prompt)
-    mgr = ConversationManager(header)
-
-    logger.info(
-        "AgentLoop started with session-header caching, "
-        "waiting for user messages."
-    )
+    mgr = ConversationManager(SessionHeader(system_prompt=get_full_system_prompt()))
+    logger.info("AgentLoop started, waiting for user messages.")
 
     while True:
         # ----------------------------------------------------------------
@@ -542,28 +435,21 @@ def run_agent(connector: Connector) -> None:
             logger.info("AgentLoop: connector shut down, exiting.")
             break
 
-        # Handle control commands (save / load / reset) before touching the LLM
+        # Handle control commands (save / load / reset / role) without the model
         if user_msg.get("role") == "control":
-            continue_tool_loop = _handle_control(user_msg, mgr, connector)
-            if continue_tool_loop:
-                continue
-            # If _handle_control returned False, it means a role change triggered
-            # an LLM call with tool invocations. We need to continue the tool
-            # execution loop to process those invocations.
-            # Fall through to the tool execution loop below.
-        else:
-            mgr.add_user(user_msg["content"])
+            _handle_control(user_msg, mgr, connector)
+            continue
+        mgr.add_user(user_msg["content"])
 
         # ----------------------------------------------------------------
-        # Inner loop: LLM -> tools -> LLM ... until plain reply
+        # Inner loop: model -> tools -> model ... until a plain reply
         # ----------------------------------------------------------------
         while True:
             try:
-                mgr.prune_task_messages(MAX_CONVERSATION_LENGTH)
+                mgr.prune_task_messages(cfg_module.MAX_CONVERSATION_LENGTH)
 
-                # Refresh parser and system prompt every turn so runtime
-                # /config changes such as CALLING_CONVENTION, provider, model,
-                # or prompt file take effect without restarting the agent.
+                # Re-read the role and prompt files every step so /config,
+                # /role and prompt-file changes apply without a restart.
                 from utils.roles import get_active_role
                 from utils.prompt import invalidate_cache
 
@@ -571,99 +457,8 @@ def run_agent(connector: Connector) -> None:
                 allowed_tools = active_role.tools if active_role and active_role.tools else None
                 invalidate_cache()
 
-                provider = llm_module.llm
-                if isinstance(provider, Provider):
-                    if _native_step(provider, mgr, connector, allowed_tools):
-                        break
-                    continue
-
-                # Legacy text protocol (OpenAILLM, DummyLLM).
-                mgr.session_header = SessionHeader(
-                    system_prompt=get_full_system_prompt(allowed_tools=allowed_tools)
-                )
-                _refresh_active_parser()
-
-                assistant_response = execute_llm_call(
-                    conversation=[],
-                    system_override=mgr.system_for_api(),
-                    messages_override=mgr.messages_for_api(),
-                )
-
-                # Propagate provider-level errors directly to the TUI
-                if _is_error_response(assistant_response):
-                    connector.send_assistant(assistant_response)
+                if _native_step(llm_module.llm, mgr, connector, allowed_tools):
                     break
-
-                tool_invocations = extract_tool_invocations(assistant_response)
-
-                if DEBUG_MODE:
-                    logger.debug("Assistant response:\n%s", assistant_response)
-                    logger.debug("Tool invocations: %s", tool_invocations)
-
-                if not tool_invocations:
-                    # Plain LLM reply - publish and wait for next user turn
-                    connector.send_assistant(assistant_response)
-                    mgr.add_assistant(assistant_response)
-                    break
-
-                # Record assistant's tool-call message *before* tool results
-                # so the LLM sees its own invocation in context.
-                mgr.add_assistant(assistant_response)
-
-                # Execute each tool and feed results back into the conversation
-                for name, args in tool_invocations:
-                    if name not in TOOL_REGISTRY:
-                        logger.error("Unknown tool after registry check: %s", name)
-                        continue
-
-                    # Verbose-mode approval: ask the TUI before executing
-                    if VERBOSE_MODE:
-                        connector.request_approval(name, args)
-                        approval = connector.receive_approval_response_blocking(
-                            timeout=60
-                        )
-                        if approval is None or not approval.get("approved", False):
-                            logger.info(
-                                "Tool %s rejected by user (verbose mode)", name
-                            )
-                            denied_result = {
-                                "error": "Tool execution rejected by user.",
-                                "tool_name": name,
-                                "success": False,
-                            }
-                            mgr.add_user(
-                                f"tool_result({json.dumps(denied_result)})"
-                            )
-                            # IMPORTANT: We must notify the connector so the user sees the rejection
-                            connector.send_assistant(f"Tool {name} was rejected by user.")
-                            continue
-
-                    tool_fn = TOOL_REGISTRY[name]
-                    try:
-                        if DEBUG_MODE:
-                            logger.debug(
-                                "Executing tool %s args=%s", name, args
-                            )
-
-                        result = execute_tool_safely(name, tool_fn, args)
-
-                        if DEBUG_MODE:
-                            logger.debug("Tool %s result: %s", name, result)
-
-                        tool_result_str = f"tool_result({json.dumps(result, ensure_ascii=False)})"
-                        mgr.add_user(tool_result_str)
-
-                    except Exception as exc:  # noqa: BLE001
-                        logger.error(
-                            "Tool execution failed for %s: %s", name, exc
-                        )
-                        error_result = {
-                            "error": f"Tool execution failed: {exc}",
-                            "tool_name": name,
-                            "success": False,
-                        }
-                        error_result_str = f"tool_result({json.dumps(error_result)})"
-                        mgr.add_user(error_result_str)
 
             except Exception as exc:  # noqa: BLE001
                 logger.error("Agent inner loop error: %s", exc)

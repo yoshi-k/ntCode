@@ -27,7 +27,7 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import Optional
 
-from tools.registry import TOOL_REGISTRY, get_full_system_prompt
+from tools.registry import TOOL_REGISTRY
 from utils.connector import Connector
 from utils.config import logger
 
@@ -387,7 +387,8 @@ def dispatch_line(line: str, connector: Connector) -> DispatchOutcome:
         )
 
     if name == "/prompt":
-        return DispatchOutcome(DispatchResult.LOCAL, reply=get_full_system_prompt())
+        from utils.llm import system_prompt_for_display
+        return DispatchOutcome(DispatchResult.LOCAL, reply=system_prompt_for_display())
 
     if name == "/provider":
         return DispatchOutcome(

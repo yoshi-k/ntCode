@@ -11,8 +11,6 @@ from providers.anthropic import AnthropicProvider
 from providers.openai_chat import OpenAIChatProvider
 from utils import config as cfg
 from providers.text_tools import TextToolsProvider
-from utils.prompt import NATIVE_TOOLS_NOTE, build_system_prompt
-from utils.tool_format import openai_tool_mode
 
 
 @pytest.fixture(autouse=True)
@@ -28,17 +26,9 @@ def _throwaway_active_client(monkeypatch):
     monkeypatch.setattr(llm_module, "llm", Throwaway())
 
 
-@pytest.mark.parametrize("convention, mode", [
-    ("", "native"), ("auto", "native"), ("native", "native"),
-    ("gemma", "text"), ("xml", "text"), ("json_block", "text"), ("ntcode", "text"),
-])
-def test_openai_tool_mode(convention, mode):
+@pytest.mark.parametrize("convention", ["", "auto", "native"])
+def test_openai_defaults_to_native_provider(convention):
     cfg.CALLING_CONVENTION = convention
-    assert openai_tool_mode() == mode
-
-
-def test_openai_defaults_to_native_provider():
-    cfg.CALLING_CONVENTION = ""
     provider = llm_module._build_openai("gemma-4", "http://localhost:8080/v1")
     assert isinstance(provider, OpenAIChatProvider)
     assert (provider.model, provider.base_url) == ("gemma-4", "http://localhost:8080/v1")
@@ -133,14 +123,6 @@ def test_config_set_calling_convention_switches_mode():
     assert isinstance(llm_module.llm, TextToolsProvider)
     handle_config_command("set CALLING_CONVENTION native")
     assert isinstance(llm_module.llm, OpenAIChatProvider)
-
-
-def test_prompt_is_native_for_native_openai():
-    cfg.LLM_PROVIDER = "openai"
-    cfg.CALLING_CONVENTION = ""
-    assert NATIVE_TOOLS_NOTE in build_system_prompt()
-    cfg.CALLING_CONVENTION = "gemma"
-    assert NATIVE_TOOLS_NOTE not in build_system_prompt()
 
 
 def test_claude_history_can_continue_on_an_openai_endpoint():

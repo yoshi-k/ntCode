@@ -47,6 +47,7 @@ from core.types import (
     new_call_id,
 )
 from providers.base import Provider
+from utils.config import logger
 
 _DECODER = json.JSONDecoder()
 
@@ -401,6 +402,9 @@ class TextToolsProvider(Provider):
         turn = self.inner.complete(system, self.to_text(messages), [])
 
         prose, calls = self.dialect.parse(turn.message.text)
+        if calls:
+            logger.info("[text/%s] parsed %d tool call(s): %s", self.dialect.name,
+                        len(calls), ", ".join(c.name for c in calls))
         stop = turn.stop_reason
         if calls and stop == "end_turn":
             stop = "tool_use"

@@ -110,9 +110,14 @@ def test_every_registered_tool_has_a_spec():
 
 def test_list_parameters_are_arrays_in_native_schema():
     """Regression: git_add.file_paths (List[str]) used to be sent to OpenAI as "string"."""
-    from utils.openai_llm import OpenAILLM
+    from core.types import Message
+    from providers.openai_chat import OpenAIChatProvider
+    from tools.registry import TOOL_REGISTRY
 
-    tools = {t["function"]["name"]: t["function"] for t in OpenAILLM._build_tools_schema()}
+    request = OpenAIChatProvider("m", base_url="http://x/v1").build_request(
+        "", [Message.user("hi")], tool_specs(TOOL_REGISTRY)
+    )
+    tools = {t["function"]["name"]: t["function"] for t in request["tools"]}
     assert tools["git_add"]["parameters"]["properties"]["file_paths"] == {
         "type": "array", "items": {"type": "string"},
         "description": "List of file paths to stage for commit",
